@@ -4,6 +4,7 @@
 // yeniden başlatır. Böylece servis gizli+tamper kalırken app/web/boşta düzgün toplanır.
 
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -26,6 +27,9 @@ internal sealed class SessionLauncher
         try { _thread?.Join(4000); } catch { }
     }
 
+    private static readonly string UninstallFlag = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal", "uninstall");
+
     private void Loop()
     {
         var exe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName;
@@ -36,6 +40,10 @@ internal sealed class SessionLauncher
         {
             try
             {
+                // Kaldırma sinyali: kullanıcı-ajanı "remove" komutu alınca bırakır. SYSTEM olan servis
+                // gerçek kaldırmayı yapar (çocuğu öldür, servisi durdur+sil, dosyaları kaldır) ve çıkar.
+                if (File.Exists(UninstallFlag)) { PerformUninstall(child); return; }
+
                 var session = WTSGetActiveConsoleSessionId();
                 bool childAlive = child is { HasExited: false };
 
@@ -60,6 +68,23 @@ internal sealed class SessionLauncher
         }
 
         try { if (child is { HasExited: false }) child.Kill(true); } catch { }
+    }
+
+    // Gerçek kaldırma — SYSTEM (LocalSystem) yetkisiyle. Servisi durdurup siler ve dosyaları kaldırır.
+    // Çalışan servis exe'si ancak servis durunca silinebilir → kopuk bir cmd sırayla yapar.
+    private static void PerformUninstall(Process? child)
+    {
+        try { if (child is { HasExited: false }) child.Kill(true); } catch { }
+        var pf = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Argus");
+        var pd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus");
+        var args = "/c sc stop ArgusAgent >nul 2>&1 & timeout /t 2 >nul & sc delete ArgusAgent >nul 2>&1 & " +
+                   "timeout /t 1 >nul & rmdir /s /q \"" + pf + "\" & rmdir /s /q \"" + pd + "\"";
+        try
+        {
+            Process.Start(new ProcessStartInfo("cmd.exe", args)
+            { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden });
+        }
+        catch { }
     }
 
     private static bool LaunchInSession(uint sessionId, string exePath, out Process? child)

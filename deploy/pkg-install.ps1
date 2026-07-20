@@ -43,6 +43,12 @@ $cfg = @{ ServerUrl = $ServerUrl; TenantKey = $TenantKey; SendSeconds = 15; File
 if ($WatchFolders) { $cfg.WatchFolders = $WatchFolders }
 $cfg | ConvertTo-Json | Set-Content "$cfgDir\config.json" -Encoding utf8
 
+# Kaldırma sinyali klasörü: kullanıcı-oturumu ajanı (yetkisiz) buraya "uninstall" işareti bırakır,
+# SYSTEM servisi görüp gerçek kaldırmayı yapar. Yalnız BU alt klasör Users'a yazılabilir; config admin-only.
+$sig = "$cfgDir\signal"
+New-Item -ItemType Directory -Force $sig | Out-Null
+icacls $sig /grant "*S-1-5-11:(OI)(CI)M" *> $null   # S-1-5-11 = Authenticated Users → Modify
+
 # Servis: LocalSystem, otomatik, "--service"
 New-Service -Name $svc -BinaryPathName "`"$exe`" --service" -DisplayName "Argus Endpoint Agent" `
     -StartupType Automatic -Description "Argus endpoint activity monitoring" | Out-Null

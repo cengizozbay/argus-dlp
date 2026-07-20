@@ -242,11 +242,12 @@ internal static class Program
         switch (cmd)
         {
             case "remove":
-                Console.WriteLine("  Sunucudan KALDIRMA komutu alındı — agent kendini kaldırıyor.");
+                Console.WriteLine("  Sunucudan KALDIRMA komutu alındı — kaldırma başlatılıyor.");
                 LogEvent(new AgentEvent("uninstall", null, null, Environment.MachineName, Environment.UserName));
                 Flush();
                 TrySend();               // son telemetriyi gönder (uninstall olayı dahil)
-                SelfUninstall();
+                WriteUninstallSignal();  // hibrit: SYSTEM servisi bu sinyali görüp servisi+dosyaları admin yetkisiyle siler
+                SelfUninstall();         // görev (task) modu için eski temizlik — servis modunda zararsız
                 _running = false;        // döngüden çık → Main temizliği çalışır
                 break;
             case "disabled":
@@ -282,6 +283,21 @@ internal static class Program
     {
         var psi = new ProcessStartInfo(file, args) { CreateNoWindow = true, UseShellExecute = false };
         Process.Start(psi)?.WaitForExit(5000);
+    }
+
+    // Hibrit kaldırma: kullanıcı-oturumu ajanı yetkisiz (servisi silemez). ProgramData\Argus\signal
+    // klasörüne bir "uninstall" işareti bırakır; SYSTEM servisi (SessionLauncher) bunu görüp gerçek
+    // kaldırmayı (servis + Program Files + ProgramData) admin yetkisiyle yapar. Klasör kuruluşta
+    // Users'a yazılabilir verilir (yalnız signal alt klasörü; config admin-only kalır).
+    private static void WriteUninstallSignal()
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "uninstall"), DateTime.Now.ToString("o"));
+        }
+        catch { /* servis yoksa (görev modu) SelfUninstall zaten devrede */ }
     }
 
     // --- Sunucuya gönderim (enroll + telemetri, offline dayanıklı) ---
