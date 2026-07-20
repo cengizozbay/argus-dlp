@@ -419,7 +419,7 @@ CREATE TABLE IF NOT EXISTS settings (
         var agg = new Dictionary<string, (string app, long sec)>(StringComparer.OrdinalIgnoreCase);
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand("SELECT s.data FROM summaries s LEFT JOIN agents a ON a.id=s.agent_id " +
-            "WHERE s.tenant_id=@t AND (@dep IS NULL OR a.department=@dep)", conn);
+            "WHERE s.tenant_id=@t AND (@dep::text IS NULL OR a.department=@dep)", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("dep", (object?)department ?? DBNull.Value);
         using var r = cmd.ExecuteReader();
@@ -487,7 +487,7 @@ CREATE TABLE IF NOT EXISTS settings (
         using var cmd = new NpgsqlCommand(
             "SELECT w.site, MAX(w.domain), MAX(w.url), SUM(w.seconds), bool_or(w.incognito), MAX(w.ts), MAX(w.title) " +
             "FROM web_usage w LEFT JOIN agents a ON a.id=w.agent_id " +
-            "WHERE w.tenant_id=@t AND (@a IS NULL OR w.agent_id=@a) AND w.ts>=@f AND w.ts<=@to AND (@dep IS NULL OR a.department=@dep) " +
+            "WHERE w.tenant_id=@t AND (@a::text IS NULL OR w.agent_id=@a) AND w.ts>=@f AND w.ts<=@to AND (@dep::text IS NULL OR a.department=@dep) " +
             "GROUP BY w.site ORDER BY SUM(w.seconds) DESC LIMIT 300", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
@@ -530,7 +530,7 @@ CREATE TABLE IF NOT EXISTS settings (
         using var cmd = new NpgsqlCommand(
             "SELECT MAX(p.app), p.exe, SUM(p.seconds), MAX(p.ts) FROM app_usage p " +
             "LEFT JOIN agents a ON a.id=p.agent_id " +
-            "WHERE p.tenant_id=@t AND (@a IS NULL OR p.agent_id=@a) AND p.ts>=@f AND p.ts<=@to AND (@dep IS NULL OR a.department=@dep) " +
+            "WHERE p.tenant_id=@t AND (@a::text IS NULL OR p.agent_id=@a) AND p.ts>=@f AND p.ts<=@to AND (@dep::text IS NULL OR a.department=@dep) " +
             "GROUP BY p.exe ORDER BY SUM(p.seconds) DESC LIMIT 300", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
@@ -572,7 +572,7 @@ CREATE TABLE IF NOT EXISTS settings (
         using var cmd = new NpgsqlCommand(
             "SELECT d.name, MAX(d.app), SUM(d.seconds), MAX(d.ts) FROM doc_usage d " +
             "LEFT JOIN agents a ON a.id=d.agent_id " +
-            "WHERE d.tenant_id=@t AND (@a IS NULL OR d.agent_id=@a) AND d.ts>=@f AND d.ts<=@to AND (@dep IS NULL OR a.department=@dep) " +
+            "WHERE d.tenant_id=@t AND (@a::text IS NULL OR d.agent_id=@a) AND d.ts>=@f AND d.ts<=@to AND (@dep::text IS NULL OR a.department=@dep) " +
             "GROUP BY d.name ORDER BY SUM(d.seconds) DESC LIMIT 300", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
@@ -593,7 +593,7 @@ CREATE TABLE IF NOT EXISTS settings (
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand(
             "SELECT agent_id,machine,ts,op,path,sensitivity,src FROM events " +
-            "WHERE tenant_id=@t AND (@a IS NULL OR agent_id=@a) AND ts>=@f AND ts<=@to ORDER BY id DESC LIMIT @l", conn);
+            "WHERE tenant_id=@t AND (@a::text IS NULL OR agent_id=@a) AND ts>=@f AND ts<=@to ORDER BY id DESC LIMIT @l", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("f", fromUtcIso);
