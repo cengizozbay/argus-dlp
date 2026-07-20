@@ -1,0 +1,55 @@
+name: Agent Paketi Üret
+
+# Agent paketini (argus-agent.zip) GitHub'ın sunucularında otomatik üretir.
+# - Elle: Actions sekmesi > "Agent Paketi Üret" > "Run workflow" butonu.
+# - Otomatik: agent/webhost/extension kodu değişince (main'e push).
+# Çıktı: her zaman güncel "latest" sürümü → Releases'ten indirilir.
+
+on:
+  workflow_dispatch:        # elle çalıştırma butonu
+  push:
+    branches: [ main ]
+    paths:
+      - 'agent/**'
+      - 'webhost/**'
+      - 'extension/**'
+      - 'deploy/build-agent-package.ps1'
+      - 'deploy/pkg-install.ps1'
+      - 'deploy/install-webhost.ps1'
+      - '.github/workflows/build-agent.yml'
+
+permissions:
+  contents: write           # Releases oluşturmak için gerekli
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Kodu al
+        uses: actions/checkout@v4
+
+      - name: .NET 8 kur
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Paketi üret (self-contained tek-exe)
+        shell: pwsh
+        run: ./deploy/build-agent-package.ps1
+
+      - name: Paketi artifact olarak sakla
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-agent
+          path: backend/wwwroot/download/argus-agent.zip
+          retention-days: 90
+
+      - name: "'latest' sürümüne yayınla (kalıcı indirme linki)"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest -y --cleanup-tag || true
+          gh release create latest backend/wwwroot/download/argus-agent.zip \
+            -t "Argus Agent (son sürüm)" \
+            -n "GitHub tarafından otomatik üretilen agent paketi. Her zaman en güncel derlemedir. Kur: install.ps1 -ServerUrl ... -TenantKey ..."
