@@ -1,0 +1,31 @@
+# ---- Derleme ciktilari ----
+**/bin/
+**/obj/
+
+# ---- Veritabani / veri ----
+*.db
+*.db-wal
+*.db-shm
+
+# ---- SIRLAR - ASLA commit etme! ----
+# tarayici uzantisi imzalama anahtari (ID buna bagli)
+deploy/argus-ext.pem
+argus-ext.pem
+# HTTPS sertifikalari
+*.pfx
+# gercek baglanti dizeleri / sifreler
+appsettings.Production.json
+
+# ---- Uretilen dagitim artefaktlari (buyuk binler - build uretir, repoya girmez) ----
+backend/wwwroot/download/*.zip
+backend/wwwroot/ext/argus-ext.crx
+backend/wwwroot/ext/argus-ext.xpi
+backend/wwwroot/ext/extid.txt
+backend/wwwroot/ext/extver.txt
+extension.crx
+extension.pem
+
+# ---- Log / gecici ----
+logs/
+*.log
+backups/

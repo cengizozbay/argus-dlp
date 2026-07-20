@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Argus Web Monitor",
+  "version": "1.0.0",
+  "description": "Argus uç nokta web aktivitesi toplayıcısı (kurumsal izleme).",
+  "browser_specific_settings": {
+    "gecko": { "id": "argus@argus.local", "strict_min_version": "115.0" }
+  },
+  "permissions": ["webNavigation", "tabs", "nativeMessaging", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "scripts": ["background.js"] },
+  "incognito": "spanning"
+}

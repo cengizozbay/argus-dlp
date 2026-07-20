@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Argus Web Monitor",
+  "version": "1.0.0",
+  "description": "Argus uç nokta web aktivitesi toplayıcısı (kurumsal izleme).",
+  "permissions": ["webNavigation", "tabs", "nativeMessaging", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "incognito": "spanning"
+}
