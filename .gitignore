@@ -18,12 +18,10 @@ appsettings.Production.json
 
 # ---- Uretilen dagitim artefaktlari (buyuk binler - build uretir, repoya girmez) ----
 backend/wwwroot/download/*.zip
-backend/wwwroot/ext/argus-ext.crx
-backend/wwwroot/ext/argus-ext.xpi
-backend/wwwroot/ext/extid.txt
-backend/wwwroot/ext/extver.txt
 extension.crx
 extension.pem
+# NOT: backend/wwwroot/ext/ (CRX/XPI/extid ~2KB) sunucunun eklentiyi dagitmasi icin repoda DURUR
+# (git pull ile sunucuya gitsin). Imza anahtari deploy/argus-ext.pem gizli kalir.
 
 # ---- Log / gecici ----
 logs/

