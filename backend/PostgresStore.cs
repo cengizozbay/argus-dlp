@@ -184,19 +184,22 @@ CREATE TABLE IF NOT EXISTS settings (
             using var r = find.ExecuteReader();
             if (r.Read())
             {
+                var cmd = r.IsDBNull(3) ? "active" : r.GetString(3);
+                if (cmd == "remove") cmd = "active";   // yeniden kurulum: bekleyen 'kaldır'ı miras alma
                 var a = new Agent
                 {
                     Id = r.GetString(0), TenantId = tenantId, Token = r.GetString(1),
                     Machine = machine, User = user, Host = host,
                     EnrolledAt = r.GetDateTime(2), LastSeen = DateTime.UtcNow,
-                    Command = r.IsDBNull(3) ? "active" : r.GetString(3)
+                    Command = cmd
                 };
                 r.Close();
                 using var upd = new NpgsqlCommand(
-                    "UPDATE agents SET user_name=@u,host=@h,last_seen=@ls WHERE id=@id", conn);
+                    "UPDATE agents SET user_name=@u,host=@h,last_seen=@ls,command=@c WHERE id=@id", conn);
                 upd.Parameters.AddWithValue("u", user);
                 upd.Parameters.AddWithValue("h", host);
                 upd.Parameters.AddWithValue("ls", a.LastSeen);
+                upd.Parameters.AddWithValue("c", cmd);
                 upd.Parameters.AddWithValue("id", a.Id);
                 upd.ExecuteNonQuery();
                 return a;
