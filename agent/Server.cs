@@ -71,6 +71,7 @@ public sealed class AgentSettings
     public int IdleThresholdSeconds { get; set; } = 180;
     public string FileMonitor { get; set; } = "auto";
     public bool UsbMonitoring { get; set; } = true;
+    public bool UsbBlocked { get; set; } = false;   // USB depolama engelle (SYSTEM servisi registry ile uygular)
     public bool ContentScan { get; set; } = true;
     public List<string>? WatchFolders { get; set; }
     public List<string>? SensitiveKeywords { get; set; }

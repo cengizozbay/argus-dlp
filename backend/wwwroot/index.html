@@ -896,6 +896,9 @@
           '<div class="frow"><label>USB izleme<span class="fh">harici medya olayları</span></label><label class="toggle"><input type="checkbox" id="set-usbon"'+(s.usbMonitoring?" checked":"")+'> Açık</label></div>'+
           '<div class="frow wide"><label>İzlenen klasörler<span class="fh">her satıra bir yol · boşsa Masaüstü + Belgeler</span></label><textarea id="set-folders" placeholder="C:\\Users\\...\\Desktop&#10;\\\\Sunucu\\Ortak">'+esc(folders)+'</textarea></div>'+
         '</div></div>'+
+        '<div class="panel"><div class="ph"><b>USB Depolama Engelleme (Uygulama)</b><span class="bd">flash bellek / harici disk — çalışan veri kopyalayamaz</span></div><div class="fgrid">'+
+          '<div class="frow"><label>USB depolama<span class="fh">Engelle = kapalı; mouse/klavye/webcam etkilenmez · değişiklik ~15 sn içinde tüm makinelere uygulanır</span></label><label class="toggle"><input type="checkbox" id="set-usbblock"'+(s.usbBlocked?" checked":"")+'> Engelle</label></div>'+
+        '</div></div>'+
         '<div class="panel"><div class="ph"><b>Agent Davranışı</b></div><div class="fgrid">'+
           nrow("send","Gönderim aralığı (sn)",s.sendSeconds,"telemetri sıklığı · min 5")+
           nrow("idle","Boşta eşiği (sn)",s.idleThresholdSeconds,"giriş yoksa boşta say")+
@@ -917,6 +920,7 @@
       sendSeconds:Math.max(5,numOf("send",15)), idleThresholdSeconds:Math.max(5,numOf("idle",60)),
       fileMonitor:document.getElementById("set-mon").value,
       usbMonitoring:document.getElementById("set-usbon").checked,
+      usbBlocked:document.getElementById("set-usbblock").checked,
       contentScan:document.getElementById("set-scan").checked,
       watchFolders:folders,
       sensitiveKeywords:keywords

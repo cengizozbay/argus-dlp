@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32;
 
 namespace Argus.Agent;
 
@@ -27,8 +28,10 @@ internal sealed class SessionLauncher
         try { _thread?.Join(4000); } catch { }
     }
 
-    private static readonly string UninstallFlag = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal", "uninstall");
+    private static readonly string SignalDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal");
+    private static readonly string UninstallFlag = Path.Combine(SignalDir, "uninstall");
+    private static readonly string UsbFlag = Path.Combine(SignalDir, "usb");
 
     private void Loop()
     {
@@ -43,6 +46,8 @@ internal sealed class SessionLauncher
                 // Kaldırma sinyali: kullanıcı-ajanı "remove" komutu alınca bırakır. SYSTEM olan servis
                 // gerçek kaldırmayı yapar (çocuğu öldür, servisi durdur+sil, dosyaları kaldır) ve çıkar.
                 if (File.Exists(UninstallFlag)) { PerformUninstall(child); return; }
+
+                ApplyUsbState();   // panelden gelen USB engelle/izin ver isteğini registry'ye uygula (SYSTEM)
 
                 var session = WTSGetActiveConsoleSessionId();
                 bool childAlive = child is { HasExited: false };
@@ -85,6 +90,27 @@ internal sealed class SessionLauncher
             { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden });
         }
         catch { }
+    }
+
+    // Panelden gelen USB depolama engelle/izin ver. USBSTOR/UASPStor sürücüsünün Start değerini ayarlar:
+    // 4 = engelli (yeni USB depolama takılınca yüklenmez), 3 = izinli. Mouse/klavye etkilenmez.
+    // Enforcement: her döngüde kontrol → biri elle geri açsa tekrar uygular. Sadece değiştiyse yazar.
+    private static void ApplyUsbState()
+    {
+        try
+        {
+            if (!File.Exists(UsbFlag)) return;
+            var want = File.ReadAllText(UsbFlag).Trim();
+            int desired = want.Equals("block", StringComparison.OrdinalIgnoreCase) ? 4 : 3;
+            foreach (var svc in new[] { "USBSTOR", "UASPStor" })
+            {
+                using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{svc}", writable: true);
+                if (key is null) continue;   // UASPStor her sistemde olmayabilir
+                var cur = key.GetValue("Start") as int? ?? 3;
+                if (cur != desired) key.SetValue("Start", desired, RegistryValueKind.DWord);
+            }
+        }
+        catch { /* registry erişilemedi */ }
     }
 
     private static bool LaunchInSession(uint sessionId, string exePath, out Process? child)

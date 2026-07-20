@@ -187,7 +187,21 @@ internal static class Program
         _classifier.Configure(s.ContentScan, s.SensitiveKeywords);
         if (s.SendSeconds >= 5) _cfg.SendSeconds = s.SendSeconds;
         if (s.IdleThresholdSeconds >= 5) _idleThreshold = s.IdleThresholdSeconds;
+        WriteUsbSignal(s.UsbBlocked);   // USB engelle/izin ver → SYSTEM servisi registry'yi uygular
         _appliedSettingsStamp = s.UpdatedAt;
+    }
+
+    // Kullanıcı-ajanı yetkisiz (HKLM yazamaz). İstenen USB durumunu signal\usb'ye bırakır;
+    // SYSTEM servisi (SessionLauncher) okuyup USBSTOR registry'sini uygular.
+    private static void WriteUsbSignal(bool blocked)
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "usb"), blocked ? "block" : "allow");
+        }
+        catch { }
     }
 
     // Panelde ayar değişince (yeni UpdatedAt) canlı uygula. Eşikler/aralık/idle ve USB aç-kapa
