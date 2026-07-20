@@ -45,20 +45,23 @@ internal static class Program
     private static AlertEngine _engine = null!;
     private static readonly ContentClassifier _classifier = new();
     private static IFileEventSource? _fileSource;
+    private static IFileEventSource? _netFileSource;   // ağ paylaşımları (UNC \\sunucu\...) için ek FSW
     private static UsbMonitor? _usbSource;
     private static ServerClient? _server;
     private static string _serverStatus = "yerel mod";
 
     private static void Main(string[] args)
     {
-        // "--service" ile kurulunca (SCM) ServiceBase ile çalış; konsol/Zamanlanmış Görev → doğrudan döngü.
-        // Aynı exe her iki modda çalışır (servis kurulumu bu argümanı geçer).
+        // "--service" (SCM): servis GÖZCÜ olarak çalışır → izleme ajanını kullanıcı oturumunda başlatır.
+        // "--useragent": gözcünün kullanıcı oturumunda başlattığı izleme süreci (Session 0 sorununu aşar).
+        // Argümansız/konsol/Zamanlanmış Görev → doğrudan izleme döngüsü.
         if (OperatingSystem.IsWindows() && args.Contains("--service"))
         {
-            System.ServiceProcess.ServiceBase.Run(new ArgusService(args.Where(a => a != "--service").ToArray()));
+            System.ServiceProcess.ServiceBase.Run(new ArgusService());
             return;
         }
-        RunAgent(args);
+        // Bayrakları ayıkla (kalan konumsal argümanlar = izlenecek klasörler).
+        RunAgent(args.Where(a => !a.StartsWith("--")).ToArray());
     }
 
     internal static void RunAgent(string[] args)
@@ -107,6 +110,25 @@ internal static class Program
         _fileSource = SelectFileSource(mode, effectiveRoots.ToList(), out var chosenMode);
         _watchDesc = $"[{chosenMode}] " + _fileSource.Describe();
 
+        // Ağ paylaşımları (UNC \\sunucu\paylaşım) USN ile GÖRÜLEMEZ (uzaktaki disk). USN modundaysak
+        // bu yollara ayrıca FileSystemWatcher koy → paylaşımda çalışılan dosya olayları da düşer.
+        if (chosenMode != "fsw")
+        {
+            var netRoots = effectiveRoots.Where(r => r.StartsWith(@"\\")).ToList();
+            if (netRoots.Count > 0)
+            {
+                try
+                {
+                    var netFsw = new FileSystemWatcherSource(netRoots);
+                    netFsw.OnEvent += OnFileEvent;
+                    netFsw.Start();
+                    _netFileSource = netFsw;
+                    _watchDesc += " + ağ: " + string.Join(", ", netRoots);
+                }
+                catch (Exception ex) { Console.WriteLine($"  Ağ paylaşımı izlenemedi: {ex.Message}"); }
+            }
+        }
+
         // USB / harici disk izleme — takılma/çıkarılma + medyaya yazılan dosyalar (usb_copy).
         if (usbOn)
         {
@@ -151,6 +173,7 @@ internal static class Program
         Flush();
         if (_server is not null) TrySend();
         _fileSource?.Dispose();
+        _netFileSource?.Dispose();
         _usbSource?.Dispose();
         Console.WriteLine($"\nDurduruldu. Veriler: {_dataDir}");
     }
@@ -451,6 +474,7 @@ internal static class Program
     private static void OnFileEvent(FileEvent e)
     {
         if (_dormant) return;   // panelden durdurulduysa dosya olaylarını yok say
+        if (NoiseFilter.IsNoise(e.Op, e.Path)) return;   // sistem/geçici/önbellek gürültüsünü kaynağında ele
         switch (e.Op)
         {
             case "create": Interlocked.Increment(ref _fileCreates); break;
@@ -638,22 +662,15 @@ internal static class Program
     internal static void StopAgentLoop() => _running = false;
 }
 
-// Windows Service sarmalayıcısı — SCM start/stop'u agent döngüsüne bağlar.
+// Windows Service sarmalayıcısı — GÖZCÜ modu.
+// Servis Session 0'da izleme YAPMAZ (ön plan penceresini göremez); bunun yerine izleme ajanını
+// aktif kullanıcı oturumunda başlatır ve canlı tutar (SessionLauncher). Tamper/kalıcılık servis tarafında.
 internal sealed class ArgusService : System.ServiceProcess.ServiceBase
 {
-    private readonly string[] _args;
-    private Thread? _thread;
-    public ArgusService(string[] args) { _args = args; ServiceName = "ArgusAgent"; }
-    protected override void OnStart(string[] args)
-    {
-        _thread = new Thread(() => Program.RunAgent(_args)) { IsBackground = true, Name = "argus-agent" };
-        _thread.Start();
-    }
-    protected override void OnStop()
-    {
-        Program.StopAgentLoop();
-        _thread?.Join(6000);
-    }
+    private readonly SessionLauncher _launcher = new();
+    public ArgusService() { ServiceName = "ArgusAgent"; }
+    protected override void OnStart(string[] args) => _launcher.Start();
+    protected override void OnStop() => _launcher.Stop();
 }
 
 internal sealed class AppStat

@@ -34,13 +34,14 @@ New-Item -ItemType Directory -Force $installDir | Out-Null
 Copy-Item "$src\*" $installDir -Recurse -Force
 $exe = "$installDir\Argus.Agent.exe"
 
-# Config → LocalSystem profili
-$sysData = "$env:windir\System32\config\systemprofile\AppData\Local\Argus"
-New-Item -ItemType Directory -Force $sysData | Out-Null
-if (-not $WatchFolders) { $WatchFolders = @("$env:SystemDrive\Users") }
-@{ ServerUrl = $ServerUrl; TenantKey = $TenantKey; SendSeconds = 15; FileMonitor = "auto";
-   WatchFolders = $WatchFolders; AllowInsecureTls = [bool]$AllowInsecureTls } |
-    ConvertTo-Json | Set-Content "$sysData\config.json" -Encoding utf8
+# Config → makine-geneli ProgramData (gözcü servis + kullanıcı-oturumu ajanı ORTAK okur).
+$cfgDir = "$env:ProgramData\Argus"
+New-Item -ItemType Directory -Force $cfgDir | Out-Null
+$cfg = @{ ServerUrl = $ServerUrl; TenantKey = $TenantKey; SendSeconds = 15; FileMonitor = "auto";
+          AllowInsecureTls = [bool]$AllowInsecureTls }
+# WatchFolders verilmezse config'e KOYMA → ajan kullanıcı oturumunda gerçek kullanıcının Masaüstü/Belgeler'ini seçer.
+if ($WatchFolders) { $cfg.WatchFolders = $WatchFolders }
+$cfg | ConvertTo-Json | Set-Content "$cfgDir\config.json" -Encoding utf8
 
 # Servis: LocalSystem, otomatik, "--service"
 New-Service -Name $svc -BinaryPathName "`"$exe`" --service" -DisplayName "Argus Endpoint Agent" `

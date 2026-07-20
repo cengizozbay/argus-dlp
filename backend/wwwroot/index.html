@@ -1050,7 +1050,7 @@
       '</div></div>';
   }
   function renderAgentlar(){
-    var ag=state.agents||[], isAdmin=(me.role==="owner"||me.role==="admin");
+    var ag=state.agents||[], isAdmin=(roleRank(me.role)>=2);  // admin, owner, superadmin
     var rows=ag.map(function(a){
       var cmd=a.command||"active", cmdLbl={active:"Aktif",disabled:"Durduruldu",remove:"Kaldırılıyor"}[cmd]||cmd;
       var acts=isAdmin? agentActions(a) : '<span class="u">salt-izleme</span>';

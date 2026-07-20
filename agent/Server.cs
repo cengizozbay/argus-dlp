@@ -22,15 +22,26 @@ public sealed class AgentConfig
 
     public static AgentConfig Load(string dataDir)
     {
-        var path = Path.Combine(dataDir, "config.json");
-        AgentConfig cfg;
-        try
+        // Aday config yolları: önce verilen dataDir (kullanıcı), sonra makine-geneli ProgramData.
+        // Servis GÖZCÜ modunda ajanı kullanıcı oturumunda başlatır; config'i ProgramData'dan bulur.
+        var candidates = new[]
         {
-            cfg = File.Exists(path)
-                ? JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path)) ?? new AgentConfig()
-                : new AgentConfig();
+            Path.Combine(dataDir, "config.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "config.json")
+        };
+        AgentConfig cfg = new();
+        foreach (var path in candidates)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    cfg = JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path)) ?? new AgentConfig();
+                    break;
+                }
+            }
+            catch { /* sonraki adaya geç */ }
         }
-        catch { cfg = new AgentConfig(); }
 
         // Ortam değişkenleri config'i geçersiz kılar (GPO/dağıtım kolaylığı).
         var envServer = Environment.GetEnvironmentVariable("ARGUS_SERVER");
