@@ -75,7 +75,7 @@ public sealed class TenantSettings
 
     // Agent davranışı
     public int SendSeconds { get; set; } = 15;           // telemetri gönderim aralığı
-    public int IdleThresholdSeconds { get; set; } = 60;  // bu kadar giriş yoksa "boşta"
+    public int IdleThresholdSeconds { get; set; } = 180;  // bu kadar giriş(+ses) yoksa "boşta" (okuma/izleme duraklamaları sayılmasın)
     public string FileMonitor { get; set; } = "auto";    // auto | usn | fsw (dosya izleme motoru)
     public bool UsbMonitoring { get; set; } = true;      // USB/harici disk izleme açık mı
     public bool ContentScan { get; set; } = true;        // dosya içeriği hassas veri taraması (TC/IBAN/kart)

@@ -13,7 +13,7 @@ namespace Argus.Agent;
 internal static class Program
 {
     private const int SampleSeconds = 2;
-    private static int _idleThreshold = 60;         // sunucu politikasıyla güncellenebilir
+    private static int _idleThreshold = 180;        // sn; okuma/izleme kısa duraklamaları boşta saymasın (sunucu ezebilir)
     private const int FlushSeconds = 10;
     private const int MaxPending = 5000;
 
@@ -397,7 +397,9 @@ internal static class Program
     {
         if (_dormant) return;   // panelden durdurulduysa toplama yapma
         var idleMs = GetIdleMilliseconds();
-        if (idleMs >= _idleThreshold * 1000)
+        // Boşta SAY: girdi yok VE ses de çıkmıyor. Ses varsa (video/müzik/toplantı) kullanıcı içerik
+        // tüketiyordur → aktif say (film/dizi süresi doğru düşsün, girdi olmasa bile).
+        if (idleMs >= _idleThreshold * 1000 && !AudioMonitor.IsPlaying())
         {
             _idleSeconds += SampleSeconds;
             if (!_wasIdle) { LogEvent(new AgentEvent("idle_start", null, null, null, null)); _wasIdle = true; }

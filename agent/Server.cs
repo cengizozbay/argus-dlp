@@ -68,7 +68,7 @@ public sealed class AgentSettings
     public int WindowSeconds { get; set; } = 30;
     public int CooldownSeconds { get; set; } = 60;
     public int SendSeconds { get; set; } = 15;
-    public int IdleThresholdSeconds { get; set; } = 60;
+    public int IdleThresholdSeconds { get; set; } = 180;
     public string FileMonitor { get; set; } = "auto";
     public bool UsbMonitoring { get; set; } = true;
     public bool ContentScan { get; set; } = true;

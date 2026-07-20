@@ -20,7 +20,6 @@ public sealed class BrowserMonitor
     { "Google Chrome", "Microsoft Edge", "Mozilla Firefox", "Firefox", "Brave", "Opera", "Vivaldi", "Chromium", "Internet Explorer" };
 
     private object? _uia;
-    private bool _uiaTried;
     private IntPtr _lastHwnd;
     private string _lastTitle = "";
     private WebTab? _cached;
@@ -47,9 +46,8 @@ public sealed class BrowserMonitor
     {
         try
         {
-            if (!_uiaTried)
+            if (_uia is null)   // ilk denemede oluşmazsa (hibrit/COM zamanlaması) sonraki çağrıda tekrar dene
             {
-                _uiaTried = true;
                 var t = Type.GetTypeFromCLSID(CUIAutomationClsid);
                 if (t is not null) _uia = Activator.CreateInstance(t);
             }
