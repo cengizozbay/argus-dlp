@@ -40,20 +40,25 @@ New-Item -ItemType Directory -Force $cfgDir | Out-Null
     ConvertTo-Json | Set-Content "$cfgDir\config.json" -Encoding utf8
 
 # ---- Windows DENETİMİ aç ----
-# 1) Denetim politikası: Dosya Sistemi = Başarı
-auditpol /set /subcategory:"File System" /success:enable | Out-Null
-Write-Host "Denetim politikası açıldı (Dosya Sistemi > Başarı)." -ForegroundColor DarkGray
+# 1) Denetim politikası: "File System" alt-kategorisi = Başarı.
+#    DİL BAĞIMSIZ olması için GUID kullan (Türkçe Windows'ta ad "Dosya Sistemi" → İngilizce ad "Parametre hatalı" verir).
+$fsGuid = "{0CCE921D-69AE-11D9-BED3-505054503030}"   # Audit File System alt-kategori GUID'i (sabit)
+auditpol /set /subcategory:"$fsGuid" /success:enable | Out-Null
+if ($LASTEXITCODE -eq 0) { Write-Host "Denetim politikası açıldı (File System > Başarı)." -ForegroundColor DarkGray }
+else { Write-Host "UYARI: auditpol başarısız (kod $LASTEXITCODE) — denetim politikasını elle aç." -ForegroundColor Yellow }
 
 # 2) SACL: her paylaşım klasörüne "Everyone → Sil/Yaz" denetim kuralı
 foreach ($f in $AuditFolders) {
     if (-not (Test-Path $f)) { Write-Host "  UYARI: klasör yok, atlandı: $f" -ForegroundColor Yellow; continue }
-    $acl = Get-Acl -Path $f -Audit
-    $rule = New-Object System.Security.AccessControl.FileSystemAuditRule(
-        "Everyone", "Delete,DeleteSubdirectoriesAndFiles,WriteData,AppendData",
-        "ContainerInherit,ObjectInherit", "None", "Success")
-    $acl.AddAuditRule($rule)
-    Set-Acl -Path $f -AclObject $acl
-    Write-Host "  Denetim eklendi: $f" -ForegroundColor DarkGray
+    try {
+        $acl = Get-Acl -Path $f -Audit
+        $rule = New-Object System.Security.AccessControl.FileSystemAuditRule(
+            "Everyone", "Delete,DeleteSubdirectoriesAndFiles,WriteData,AppendData",
+            "ContainerInherit,ObjectInherit", "None", "Success")
+        $acl.AddAuditRule($rule)
+        Set-Acl -Path $f -AclObject $acl
+        Write-Host "  Denetim eklendi: $f" -ForegroundColor DarkGray
+    } catch { Write-Host "  UYARI: SACL eklenemedi ($f): $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 
 # ---- Servis: fileserver modu (SYSTEM, doğrudan denetim) ----
