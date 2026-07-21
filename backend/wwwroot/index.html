@@ -477,7 +477,7 @@
   function wireReport(v,onData,endpoint){
     endpoint=endpoint||"/report/web";
     var person=v.querySelector(".rp-person"),from=v.querySelector(".rp-from"),to=v.querySelector(".rp-to"),apply=v.querySelector(".rp-apply");
-    function run(){ api(endpoint+"?agent="+encodeURIComponent(person.value)+"&from="+from.value+"&to="+to.value).then(onData).catch(function(){ onData([]); }); }
+    function run(){ aktFilter.person=person.value; aktFilter.from=from.value; aktFilter.to=to.value; api(endpoint+"?agent="+encodeURIComponent(person.value)+"&from="+from.value+"&to="+to.value).then(onData).catch(function(){ onData([]); }); }
     apply.onclick=run; person.onchange=run;
     v.querySelectorAll(".db-presets button").forEach(function(b){ b.onclick=function(){ var d=+b.getAttribute("data-days"); from.value=daysAgo(d); to.value=today(); run(); }; });
     run();
@@ -631,8 +631,7 @@
   }
   function renderDosya(){
     var v=document.getElementById("v-dosya");
-    var pv=v.querySelector(".rp-person"),fv=v.querySelector(".rp-from"),tv=v.querySelector(".rp-to");
-    var person=pv?pv.value:"", from=fv?fv.value:daysAgo(29), to=tv?tv.value:today();
+    var person=aktFilter.person, from=aktFilter.from, to=aktFilter.to;   // ortak filtre (sekmeler arası korunur)
     var segs=[["Tümü",null],["Hassas","sens"],["Sildi","delete"],["Kopyaladı","copy"],["USB'ye Kopya","usb_copy"],["USB Takıldı","usb_insert"],["Oluşturdu","create"],["Değiştirdi","modify"]];
     var segBtns=segs.map(function(s,i){ return '<button class="'+(i===0?"on":"")+'" data-seg="dosya" data-cat="'+(s[1]===null?"":s[1])+'">'+s[0]+'</button>'; }).join("");
     v.innerHTML=
@@ -664,8 +663,7 @@
   // ---------- WEB AKTİVİTESİ ----------
   function renderWeb(){
     var v=document.getElementById("v-web");
-    var pv=v.querySelector(".rp-person"),fv=v.querySelector(".rp-from"),tv=v.querySelector(".rp-to");
-    var person=pv?pv.value:"", from=fv?fv.value:daysAgo(29), to=tv?tv.value:today();
+    var person=aktFilter.person, from=aktFilter.from, to=aktFilter.to;   // ortak filtre (sekmeler arası korunur)
     v.innerHTML=
       '<div class="head"><div><h1>Web Aktivitesi</h1><div class="sub">Kişi ve tarihe göre site başına süre · başlığa tıkla → sırala · linkler tıklanır</div></div></div>'+
       reportToolbar(person,from,to)+
@@ -703,8 +701,7 @@
   function appCmp(a,b){ var ka=appVal(a,appSort.key),kb=appVal(b,appSort.key); return (ka<kb?-1:ka>kb?1:0)*appSort.dir; }
   function renderUygulama(){
     var v=document.getElementById("v-uygulama");
-    var pv=v.querySelector(".rp-person"),fv=v.querySelector(".rp-from"),tv=v.querySelector(".rp-to");
-    var person=pv?pv.value:"", from=fv?fv.value:daysAgo(29), to=tv?tv.value:today();
+    var person=aktFilter.person, from=aktFilter.from, to=aktFilter.to;   // ortak filtre (sekmeler arası korunur)
     v.innerHTML=
       '<div class="head"><div><h1>Uygulama Logları</h1><div class="sub">Kişi ve tarihe göre uygulama başına kullanım süresi · başlığa tıkla → sırala</div></div></div>'+
       reportToolbar(person,from,to)+
@@ -729,8 +726,7 @@
   function docIcon(n){ var e=(n||"").split(".").pop().toLowerCase(); var m={docx:"📄",doc:"📄",xlsx:"📊",xls:"📊",csv:"📊",pptx:"📽️",ppt:"📽️",pdf:"📕",txt:"📝",md:"📝"}; return m[e]||"📄"; }
   function renderBelge(){
     var v=document.getElementById("v-belge");
-    var pv=v.querySelector(".rp-person"),fv=v.querySelector(".rp-from"),tv=v.querySelector(".rp-to");
-    var person=pv?pv.value:"", from=fv?fv.value:daysAgo(29), to=tv?tv.value:today();
+    var person=aktFilter.person, from=aktFilter.from, to=aktFilter.to;   // ortak filtre (sekmeler arası korunur)
     v.innerHTML=
       '<div class="head"><div><h1>Belge Süreleri</h1><div class="sub">Kişi ve tarihe göre belge başına geçirilen süre (Word/Excel/PDF/editör) · başlığa tıkla → sırala</div></div></div>'+
       reportToolbar(person,from,to)+
@@ -750,8 +746,7 @@
 
   function renderRapor(){
     var v=document.getElementById("v-rapor");
-    var pv=v.querySelector(".rp-person"),fv=v.querySelector(".rp-from"),tv=v.querySelector(".rp-to");
-    var person=pv?pv.value:"", from=fv?fv.value:daysAgo(29), to=tv?tv.value:today();
+    var person=aktFilter.person, from=aktFilter.from, to=aktFilter.to;   // ortak filtre (sekmeler arası korunur)
     v.innerHTML=
       '<div class="head"><div><h1>Raporlar</h1><div class="sub">Kişinin seçili tarih aralığında hangi sitede ne kadar vakit geçirdiği</div></div><button class="btn rp-csv">CSV indir</button></div>'+
       reportToolbar(person,from,to)+
@@ -1208,6 +1203,7 @@
 
   // ---------- AKTİVİTE (Web / Uygulama / Belge / Rapor — alt sekmeli) ----------
   var aktSub="web";
+  var aktFilter={person:"",from:daysAgo(29),to:today()};   // Aktivite sekmeleri ORTAK kişi/tarih filtresi
   function renderAktivite(sub){
     sub=sub||aktSub; aktSub=sub;
     document.querySelectorAll("#aktTabs .subtab").forEach(function(b){
