@@ -402,7 +402,7 @@ internal static class Program
         {
             var ds = kv.Value;
             if (ds.IntervalSeconds <= 0) continue;
-            list.Add(new DocUsageOut(kv.Key, ds.App, ds.IntervalSeconds, nowIso));
+            list.Add(new DocUsageOut(kv.Key, ds.App, ds.IntervalSeconds, nowIso, ds.Path));
             ds.IntervalSeconds = 0;
         }
         return list;
@@ -464,6 +464,12 @@ internal static class Program
                 if (!DocStats.TryGetValue(doc, out var ds)) { ds = new DocStat(); DocStats[doc] = ds; }
                 ds.App = DocumentMonitor.AppName(exe);
                 ds.Seconds += SampleSeconds; ds.IntervalSeconds += SampleSeconds; ds.LastSeen = DateTime.Now;
+                // Konum (tam yol) — açık dosya handle'ından, belge başına TEK SEFER (best-effort; olmazsa boş).
+                if (!ds.PathTried)
+                {
+                    ds.PathTried = true;
+                    try { _ = GetWindowThreadProcessId(hwnd, out var pid); ds.Path = DocPathFinder.Find((int)pid, doc); } catch { }
+                }
             }
         }
         // Tarayıcıda açılan belge dosyaları da (PDF/Office) Belge'ye düşsün — başlık dosya adıyla bitiyorsa.
@@ -760,6 +766,8 @@ internal sealed class DocStat
     public long Seconds;           // oturum toplamı
     public long IntervalSeconds;   // son gönderimden bu yana (zaman serisi için)
     public DateTime LastSeen;
+    public string? Path;           // belgenin tam yolu (konum) — açık dosya handle'ından, tek sefer bulunur
+    public bool PathTried;         // yol bir kez arandıysa tekrar arama (performans)
 }
 
 internal sealed record SessionSummary(

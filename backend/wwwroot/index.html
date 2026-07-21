@@ -725,6 +725,23 @@
   function docVal(x,k){ if(k==="name") return (x.name||"").toLowerCase(); if(k==="app") return (x.app||"").toLowerCase(); if(k==="seconds") return x.seconds||0; if(k==="lastTs") return x.lastTs?new Date(x.lastTs).getTime():0; return 0; }
   function docCmp(a,b){ var ka=docVal(a,docSort.key),kb=docVal(b,docSort.key); return (ka<kb?-1:ka>kb?1:0)*docSort.dir; }
   function docIcon(n){ var e=(n||"").split(".").pop().toLowerCase(); var m={docx:"📄",doc:"📄",xlsx:"📊",xls:"📊",csv:"📊",pptx:"📽️",ppt:"📽️",pdf:"📕",txt:"📝",md:"📝"}; return m[e]||"📄"; }
+  function docLoc(p){
+    if(!p) return "Konum bilinmiyor (tarayıcıda açılmış ya da yolu vermeyen uygulama)";
+    var low=p.toLowerCase();
+    if(p.slice(0,2)==="\\\\") return "Ağ paylaşımı (fileserver)";
+    if(low.indexOf("\\desktop\\")>=0) return "Masaüstü";
+    if(low.indexOf("\\downloads\\")>=0) return "İndirilenler";
+    if(low.indexOf("\\documents\\")>=0) return "Belgeler";
+    return "Yerel disk";
+  }
+  function docDetail(x){
+    var kv=[["Konum",docLoc(x.path),true]];
+    if(x.path) kv.push(["Tam yol",x.path,false]);
+    kv.push(["Uygulama",x.app||"—",false]);
+    kv.push(["Toplam süre",fmt(x.seconds),false]);
+    if(x.lastTs) kv.push(["Son açılış",fmtTs(x.lastTs)+" ("+ago(x.lastTs)+")",false]);
+    return '<div class="evdetail">'+kv.map(function(k){ return '<span class="evd-k">'+esc(k[0])+'</span><span class="evd-v'+(k[2]?" hot":"")+'">'+esc(k[1])+'</span>'; }).join("")+'</div>';
+  }
   function renderBelge(){
     var v=document.getElementById("v-belge");
     var person=aktFilter.person, from=aktFilter.from, to=aktFilter.to;   // ortak filtre (sekmeler arası korunur)
@@ -732,12 +749,16 @@
       '<div class="head"><div><h1>Belge Süreleri</h1><div class="sub">Kişi ve tarihe göre belge başına geçirilen süre (Word/Excel/PDF/editör) · başlığa tıkla → sırala</div></div></div>'+
       reportToolbar(person,from,to)+
       '<div class="panel"><div class="tw"><table><thead><tr>'+docTh("name","Belge")+docTh("app","Uygulama")+docTh("seconds","Süre")+docTh("lastTs","Son Açılış")+'</tr></thead><tbody class="rp-body"><tr><td colspan="4"><div class="empty">Yükleniyor…</div></td></tr></tbody></table></div></div>';
-    var lastRows=[];
+    var lastRows=[], openDoc={};
     function draw(){
       var rows=lastRows.slice().sort(docCmp);
       v.querySelector(".rp-body").innerHTML= rows.length? rows.map(function(x){
-        return '<tr><td><span class="fname">'+docIcon(x.name)+' '+esc(x.name)+'</span></td><td class="u">'+esc(x.app)+'</td><td class="num u">'+fmt(x.seconds)+'</td><td class="mono u" style="font-size:11px">'+(x.lastTs?fmtTs(x.lastTs):"—")+'</td></tr>';
+        var k=x.name||"", open=!!openDoc[k];
+        var main='<tr class="ev-row'+(open?" open":"")+'" data-dk="'+esc(k)+'"><td><span class="fname">'+docIcon(x.name)+' '+esc(x.name)+'</span><span class="chev">▾</span></td><td class="u">'+esc(x.app)+'</td><td class="num u">'+fmt(x.seconds)+'</td><td class="mono u" style="font-size:11px">'+(x.lastTs?fmtTs(x.lastTs):"—")+'</td></tr>';
+        var det='<tr class="ev-detail" style="display:'+(open?"":"none")+'"><td colspan="4">'+docDetail(x)+'</td></tr>';
+        return main+det;
       }).join("") : '<tr><td colspan="4"><div class="empty">Bu kişi/aralıkta belge verisi yok — Word/Excel/PDF gibi bir belge açıp bir süre üzerinde çalışın</div></td></tr>';
+      v.querySelectorAll(".ev-row[data-dk]").forEach(function(tr){ tr.onclick=function(){ var kk=tr.getAttribute("data-dk"); openDoc[kk]=!openDoc[kk]; draw(); }; });
       v.querySelectorAll("th.sortable").forEach(function(th){ var on=th.getAttribute("data-sk")===docSort.key; th.classList.toggle("act",on); var ar=th.querySelector(".ar"); if(ar) ar.textContent=on?(docSort.dir<0?"▼":"▲"):"▲"; });
       applyFilters();
     }

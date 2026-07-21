@@ -37,6 +37,8 @@ public sealed class SqliteStore : IStore, IDisposable
             Exec("ALTER TABLE events ADD COLUMN src TEXT");
         if (!ColumnExists("events", "user_name"))
             Exec("ALTER TABLE events ADD COLUMN user_name TEXT");   // fileserver denetimi: olayı YAPAN kullanıcı
+        if (!ColumnExists("doc_usage", "path"))
+            Exec("ALTER TABLE doc_usage ADD COLUMN path TEXT");     // belgenin tam yolu (konum)
         if (!ColumnExists("web_usage", "title"))
             Exec("ALTER TABLE web_usage ADD COLUMN title TEXT");
         if (!ColumnExists("panel_users", "must_change"))
@@ -544,10 +546,10 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
     {
         lock (_gate)
             foreach (var u in usage)
-                Exec("INSERT INTO doc_usage(tenant_id,agent_id,machine,user_name,name,app,seconds,ts) " +
-                     "VALUES(@t,@a,@m,@u,@n,@app,@sec,@ts)",
+                Exec("INSERT INTO doc_usage(tenant_id,agent_id,machine,user_name,name,app,seconds,ts,path) " +
+                     "VALUES(@t,@a,@m,@u,@n,@app,@sec,@ts,@p)",
                     ("@t", tenantId), ("@a", agentId), ("@m", machine), ("@u", user),
-                    ("@n", u.Name), ("@app", u.App), ("@sec", u.Seconds), ("@ts", u.Ts));
+                    ("@n", u.Name), ("@app", u.App), ("@sec", u.Seconds), ("@ts", u.Ts), ("@p", u.Path));
     }
 
     public IReadOnlyList<DocReportRow> DocReport(string tenantId, string? agentId, string fromUtcIso, string toUtcIso, string? department = null)
@@ -557,7 +559,7 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
             var list = new List<DocReportRow>();
             using var cmd = _conn.CreateCommand();
             cmd.CommandText =
-                "SELECT d.name, MAX(d.app), SUM(d.seconds), MAX(d.ts) FROM doc_usage d " +
+                "SELECT d.name, MAX(d.app), SUM(d.seconds), MAX(d.ts), MAX(d.path) FROM doc_usage d " +
                 "LEFT JOIN agents a ON a.id=d.agent_id " +
                 "WHERE d.tenant_id=@t AND (@a IS NULL OR d.agent_id=@a) AND d.ts>=@f AND d.ts<=@to AND (@dep IS NULL OR a.department=@dep) " +
                 "GROUP BY d.name ORDER BY SUM(d.seconds) DESC LIMIT 300";
@@ -570,7 +572,8 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
             while (r.Read())
                 list.Add(new DocReportRow(
                     r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
-                    r.IsDBNull(2) ? 0 : r.GetInt64(2), r.IsDBNull(3) ? null : r.GetString(3)));
+                    r.IsDBNull(2) ? 0 : r.GetInt64(2), r.IsDBNull(3) ? null : r.GetString(3),
+                    r.IsDBNull(4) ? null : r.GetString(4)));
             return list;
         }
     }

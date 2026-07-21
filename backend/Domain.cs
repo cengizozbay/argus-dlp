@@ -111,8 +111,8 @@ public record AppUsageDto(string App, string Exe, long Seconds, string Ts);
 public record AppReportRow(string App, string Exe, long Seconds, string? LastTs);
 
 // Dosya-içi süre (belge başına)
-public record DocUsageDto(string Name, string App, long Seconds, string Ts);
-public record DocReportRow(string Name, string App, long Seconds, string? LastTs);
+public record DocUsageDto(string Name, string App, long Seconds, string Ts, string? Path = null);
+public record DocReportRow(string Name, string App, long Seconds, string? LastTs, string? Path = null);
 
 public record TelemetryBatch(SummaryDto? Summary, List<AlertDto>? Alerts, List<EventDto>? Events, List<WebUsageDto>? WebUsage, List<AppUsageDto>? AppUsage, List<DocUsageDto>? DocUsage);
 

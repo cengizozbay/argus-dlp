@@ -69,6 +69,7 @@ CREATE INDEX IF NOT EXISTS ix_appusage ON app_usage(tenant_id, agent_id, ts);
 CREATE TABLE IF NOT EXISTS doc_usage (
   id bigserial PRIMARY KEY, tenant_id text, agent_id text, machine text, user_name text,
   name text, app text, seconds bigint, ts text);
+ALTER TABLE doc_usage ADD COLUMN IF NOT EXISTS path text;
 CREATE INDEX IF NOT EXISTS ix_docusage ON doc_usage(tenant_id, agent_id, ts);
 CREATE TABLE IF NOT EXISTS settings (
   tenant_id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL);";
@@ -556,8 +557,8 @@ CREATE TABLE IF NOT EXISTS settings (
         foreach (var u in usage)
         {
             using var cmd = new NpgsqlCommand(
-                "INSERT INTO doc_usage(tenant_id,agent_id,machine,user_name,name,app,seconds,ts) " +
-                "VALUES(@t,@a,@m,@u,@n,@app,@sec,@ts)", conn);
+                "INSERT INTO doc_usage(tenant_id,agent_id,machine,user_name,name,app,seconds,ts,path) " +
+                "VALUES(@t,@a,@m,@u,@n,@app,@sec,@ts,@p)", conn);
             cmd.Parameters.AddWithValue("t", tenantId);
             cmd.Parameters.AddWithValue("a", agentId);
             cmd.Parameters.AddWithValue("m", machine);
@@ -566,6 +567,7 @@ CREATE TABLE IF NOT EXISTS settings (
             cmd.Parameters.AddWithValue("app", (object?)u.App ?? DBNull.Value);
             cmd.Parameters.AddWithValue("sec", u.Seconds);
             cmd.Parameters.AddWithValue("ts", u.Ts);
+            cmd.Parameters.AddWithValue("p", (object?)u.Path ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
     }
@@ -575,7 +577,7 @@ CREATE TABLE IF NOT EXISTS settings (
         var list = new List<DocReportRow>();
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand(
-            "SELECT d.name, MAX(d.app), SUM(d.seconds), MAX(d.ts) FROM doc_usage d " +
+            "SELECT d.name, MAX(d.app), SUM(d.seconds), MAX(d.ts), MAX(d.path) FROM doc_usage d " +
             "LEFT JOIN agents a ON a.id=d.agent_id " +
             "WHERE d.tenant_id=@t AND (@a::text IS NULL OR d.agent_id=@a) AND d.ts>=@f AND d.ts<=@to AND (@dep::text IS NULL OR a.department=@dep) " +
             "GROUP BY d.name ORDER BY SUM(d.seconds) DESC LIMIT 300", conn);
@@ -588,7 +590,8 @@ CREATE TABLE IF NOT EXISTS settings (
         while (r.Read())
             list.Add(new DocReportRow(
                 r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
-                r.IsDBNull(2) ? 0 : r.GetInt64(2), r.IsDBNull(3) ? null : r.GetString(3)));
+                r.IsDBNull(2) ? 0 : r.GetInt64(2), r.IsDBNull(3) ? null : r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4)));
         return list;
     }
 
