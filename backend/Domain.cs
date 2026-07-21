@@ -102,7 +102,7 @@ public record AlertDto(
     int Count, int WindowSeconds, List<string> Samples, string Machine, string User);
 
 public record EventDto(
-    string Ts, string? Type, string? Op, string? Exe, string? App, string? Title, string? Path, string? Sensitivity = null, string? Source = null);
+    string Ts, string? Type, string? Op, string? Exe, string? App, string? Title, string? Path, string? Sensitivity = null, string? Source = null, string? User = null);
 
 public record WebUsageDto(string Site, string? Domain, string? Url, string? Title, long Seconds, bool Incognito, string Ts);
 
@@ -131,7 +131,7 @@ public record AgentDepartmentRequest(string Department);
 public record TenantAlert(string AgentId, string Machine, DateTime ReceivedAt, AlertDto Alert);
 
 // Dosya olayı akışı (Dosya Olayları ekranı) ve web aktivitesi (Web Aktivitesi ekranı)
-public record TenantEvent(string AgentId, string Machine, string Ts, string Op, string? Path, string? Sensitivity = null, string? Source = null);
+public record TenantEvent(string AgentId, string Machine, string Ts, string Op, string? Path, string? Sensitivity = null, string? Source = null, string? User = null);
 public record WebActivityRow(string Machine, string User, string Domain, string? Url, string Title, long Seconds, bool Incognito);
 public record AppUsageRow(string App, string Exe, long Seconds);
 public record AppLogRow(string AgentId, string Machine, string User, string App, string Exe, long Seconds);

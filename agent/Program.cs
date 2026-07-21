@@ -40,6 +40,7 @@ internal static class Program
     private static DateTime _sessionStart;
     private static volatile bool _running = true;
     private static volatile bool _dormant;    // sunucudan "disabled" gelince toplama durur, yoklama sürer
+    private static bool _fileServerMode;      // --fileserver: Güvenlik günlüğü denetimi (gerçek kullanıcı adı)
 
     private static AgentConfig _cfg = new();
     private static AlertEngine _engine = null!;
@@ -52,12 +53,14 @@ internal static class Program
 
     private static void Main(string[] args)
     {
-        // "--service" (SCM): servis GÖZCÜ olarak çalışır → izleme ajanını kullanıcı oturumunda başlatır.
+        // "--service": SCM servis modu. "--fileserver": fileserver denetim modu (Güvenlik günlüğü, gerçek kullanıcı).
         // "--useragent": gözcünün kullanıcı oturumunda başlattığı izleme süreci (Session 0 sorununu aşar).
-        // Argümansız/konsol/Zamanlanmış Görev → doğrudan izleme döngüsü.
+        _fileServerMode = args.Contains("--fileserver");
         if (OperatingSystem.IsWindows() && args.Contains("--service"))
         {
-            System.ServiceProcess.ServiceBase.Run(new ArgusService());
+            // Fileserver: SYSTEM olarak DOĞRUDAN denetim (masaüstü yok, Güvenlik günlüğü SYSTEM ister).
+            // Uç nokta: GÖZCÜ (izleme ajanını kullanıcı oturumunda başlatır).
+            System.ServiceProcess.ServiceBase.Run(_fileServerMode ? new FileServerService() : new ArgusService());
             return;
         }
         // Bayrakları ayıkla (kalan konumsal argümanlar = izlenecek klasörler).
@@ -106,31 +109,43 @@ internal static class Program
         var effectiveRoots = settings?.WatchFolders is { Count: > 0 } ? settings.WatchFolders : roots;
         var usbOn = settings?.UsbMonitoring ?? true;
 
-        // Dosya olayı kaynağı: USN Journal (güvenilir, admin ister) ya da FileSystemWatcher (yedek).
-        _fileSource = SelectFileSource(mode, effectiveRoots.ToList(), out var chosenMode);
-        _watchDesc = $"[{chosenMode}] " + _fileSource.Describe();
-
-        // Ağ paylaşımları (UNC \\sunucu\paylaşım) USN ile GÖRÜLEMEZ (uzaktaki disk). USN modundaysak
-        // bu yollara ayrıca FileSystemWatcher koy → paylaşımda çalışılan dosya olayları da düşer.
-        if (chosenMode != "fsw")
+        if (_fileServerMode)
         {
-            var netRoots = effectiveRoots.Where(r => r.StartsWith(@"\\")).ToList();
-            if (netRoots.Count > 0)
+            // FİLESERVER modu: yerel/paylaşım FSW yerine Windows Güvenlik günlüğü denetimini oku
+            // (Event 4663) → paylaşımdaki dosya olayları GERÇEK kullanıcı adıyla düşer. SYSTEM (servis) ister.
+            var audit = new FileServerAudit();
+            audit.OnEvent += OnFileEvent;
+            audit.Start();
+            _fileSource = audit;
+            _watchDesc = audit.Describe();
+        }
+        else
+        {
+            // Dosya olayı kaynağı: USN Journal (güvenilir, admin ister) ya da FileSystemWatcher (yedek).
+            _fileSource = SelectFileSource(mode, effectiveRoots.ToList(), out var chosenMode);
+            _watchDesc = $"[{chosenMode}] " + _fileSource.Describe();
+
+            // Ağ paylaşımları (UNC) USN ile görülemez → USN modundaysak onlara ayrıca FSW koy.
+            if (chosenMode != "fsw")
             {
-                try
+                var netRoots = effectiveRoots.Where(r => r.StartsWith(@"\\")).ToList();
+                if (netRoots.Count > 0)
                 {
-                    var netFsw = new FileSystemWatcherSource(netRoots);
-                    netFsw.OnEvent += OnFileEvent;
-                    netFsw.Start();
-                    _netFileSource = netFsw;
-                    _watchDesc += " + ağ: " + string.Join(", ", netRoots);
+                    try
+                    {
+                        var netFsw = new FileSystemWatcherSource(netRoots);
+                        netFsw.OnEvent += OnFileEvent;
+                        netFsw.Start();
+                        _netFileSource = netFsw;
+                        _watchDesc += " + ağ: " + string.Join(", ", netRoots);
+                    }
+                    catch (Exception ex) { Console.WriteLine($"  Ağ paylaşımı izlenemedi: {ex.Message}"); }
                 }
-                catch (Exception ex) { Console.WriteLine($"  Ağ paylaşımı izlenemedi: {ex.Message}"); }
             }
         }
 
         // USB / harici disk izleme — takılma/çıkarılma + medyaya yazılan dosyalar (usb_copy).
-        if (usbOn)
+        if (usbOn && !_fileServerMode)
         {
             var usb = new UsbMonitor();
             usb.OnEvent += OnFileEvent;
@@ -148,7 +163,7 @@ internal static class Program
 
         while (_running)
         {
-            Sample();
+            if (!_fileServerMode) Sample();   // fileserver'da ön plan/aktif-boşta yok, sadece denetim olayları
 
             if ((DateTime.Now - lastFlush).TotalSeconds >= FlushSeconds) { Flush(); lastFlush = DateTime.Now; }
 
@@ -543,7 +558,7 @@ internal static class Program
         }
 
         LogLine(_eventsPath, e);
-        if (_server is not null) Enqueue(PendingEvents, new OutEvent(e.Ts, null, e.Op, null, null, null, e.Path, e.Sensitivity, e.OldPath));
+        if (_server is not null) Enqueue(PendingEvents, new OutEvent(e.Ts, null, e.Op, null, null, null, e.Path, e.Sensitivity, e.OldPath, e.User));
         _engine.Observe(e);
     }
 
@@ -714,6 +729,20 @@ internal sealed class ArgusService : System.ServiceProcess.ServiceBase
     public ArgusService() { ServiceName = "ArgusAgent"; }
     protected override void OnStart(string[] args) => _launcher.Start();
     protected override void OnStop() => _launcher.Stop();
+}
+
+// Fileserver denetim servisi — SYSTEM olarak DOĞRUDAN RunAgent (masaüstü/ön plan yok; Güvenlik
+// günlüğünü okumak SYSTEM ister). Gözcü/oturum enjeksiyonu YOK, çünkü sunucuda izlenecek kullanıcı yok.
+internal sealed class FileServerService : System.ServiceProcess.ServiceBase
+{
+    private Thread? _thread;
+    public FileServerService() { ServiceName = "ArgusAgent"; }
+    protected override void OnStart(string[] args)
+    {
+        _thread = new Thread(() => Program.RunAgent(Array.Empty<string>())) { IsBackground = true, Name = "argus-fsaudit" };
+        _thread.Start();
+    }
+    protected override void OnStop() { Program.StopAgentLoop(); _thread?.Join(6000); }
 }
 
 internal sealed class AppStat

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS events (
   id bigserial PRIMARY KEY, tenant_id text NOT NULL, agent_id text, machine text, ts text, op text, path text);
 ALTER TABLE events ADD COLUMN IF NOT EXISTS sensitivity text;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS src text;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS user_name text;
 CREATE INDEX IF NOT EXISTS ix_events_tenant ON events(tenant_id, id DESC);
 CREATE TABLE IF NOT EXISTS web_usage (
   id bigserial PRIMARY KEY, tenant_id text, agent_id text, machine text, user_name text,
@@ -312,7 +313,7 @@ CREATE TABLE IF NOT EXISTS settings (
         {
             if (e.Op is null || !FileOps.Contains(e.Op)) continue;   // sadece dosya olayları
             using var cmd = new NpgsqlCommand(
-                "INSERT INTO events(tenant_id,agent_id,machine,ts,op,path,sensitivity,src) VALUES(@t,@a,@m,@ts,@op,@p,@s,@src)", conn);
+                "INSERT INTO events(tenant_id,agent_id,machine,ts,op,path,sensitivity,src,user_name) VALUES(@t,@a,@m,@ts,@op,@p,@s,@src,@u)", conn);
             cmd.Parameters.AddWithValue("t", tenantId);
             cmd.Parameters.AddWithValue("a", agentId);
             cmd.Parameters.AddWithValue("m", (object?)machine ?? DBNull.Value);
@@ -321,6 +322,7 @@ CREATE TABLE IF NOT EXISTS settings (
             cmd.Parameters.AddWithValue("p", (object?)e.Path ?? DBNull.Value);
             cmd.Parameters.AddWithValue("s", (object?)e.Sensitivity ?? DBNull.Value);
             cmd.Parameters.AddWithValue("src", (object?)e.Source ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("u", (object?)e.User ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
         Touch(conn, agentId);
@@ -331,7 +333,7 @@ CREATE TABLE IF NOT EXISTS settings (
         var list = new List<TenantEvent>();
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand(
-            "SELECT agent_id,machine,ts,op,path,sensitivity,src FROM events WHERE tenant_id=@t ORDER BY id DESC LIMIT @l", conn);
+            "SELECT agent_id,machine,ts,op,path,sensitivity,src,user_name FROM events WHERE tenant_id=@t ORDER BY id DESC LIMIT @l", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("l", limit);
         using var r = cmd.ExecuteReader();
@@ -340,7 +342,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
                 r.IsDBNull(2) ? "" : r.GetString(2), r.IsDBNull(3) ? "" : r.GetString(3),
                 r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
-                r.IsDBNull(6) ? null : r.GetString(6)));
+                r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7)));
         return list;
     }
 
@@ -595,7 +597,7 @@ CREATE TABLE IF NOT EXISTS settings (
         var list = new List<TenantEvent>();
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand(
-            "SELECT agent_id,machine,ts,op,path,sensitivity,src FROM events " +
+            "SELECT agent_id,machine,ts,op,path,sensitivity,src,user_name FROM events " +
             "WHERE tenant_id=@t AND (@a::text IS NULL OR agent_id=@a) AND ts>=@f AND ts<=@to ORDER BY id DESC LIMIT @l", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
@@ -608,7 +610,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
                 r.IsDBNull(2) ? "" : r.GetString(2), r.IsDBNull(3) ? "" : r.GetString(3),
                 r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
-                r.IsDBNull(6) ? null : r.GetString(6)));
+                r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7)));
         return list;
     }
 

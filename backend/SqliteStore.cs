@@ -35,6 +35,8 @@ public sealed class SqliteStore : IStore, IDisposable
             Exec("ALTER TABLE agents ADD COLUMN command TEXT DEFAULT 'active'");
         if (!ColumnExists("events", "src"))
             Exec("ALTER TABLE events ADD COLUMN src TEXT");
+        if (!ColumnExists("events", "user_name"))
+            Exec("ALTER TABLE events ADD COLUMN user_name TEXT");   // fileserver denetimi: olayı YAPAN kullanıcı
         if (!ColumnExists("web_usage", "title"))
             Exec("ALTER TABLE web_usage ADD COLUMN title TEXT");
         if (!ColumnExists("panel_users", "must_change"))
@@ -310,9 +312,9 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
             foreach (var e in events)
             {
                 if (e.Op is null || !FileOps.Contains(e.Op)) continue;   // sadece dosya olayları
-                Exec("INSERT INTO events(tenant_id,agent_id,machine,ts,op,path,sensitivity,src) VALUES(@t,@a,@m,@ts,@op,@p,@s,@src)",
+                Exec("INSERT INTO events(tenant_id,agent_id,machine,ts,op,path,sensitivity,src,user_name) VALUES(@t,@a,@m,@ts,@op,@p,@s,@src,@u)",
                     ("@t", tenantId), ("@a", agentId), ("@m", machine), ("@ts", e.Ts), ("@op", e.Op.ToLowerInvariant()),
-                    ("@p", e.Path), ("@s", e.Sensitivity), ("@src", e.Source));
+                    ("@p", e.Path), ("@s", e.Sensitivity), ("@src", e.Source), ("@u", e.User));
             }
             TouchNoLock(agentId);
         }
@@ -324,7 +326,7 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
         {
             var list = new List<TenantEvent>();
             using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT agent_id,machine,ts,op,path,sensitivity,src FROM events WHERE tenant_id=@t ORDER BY id DESC LIMIT @l";
+            cmd.CommandText = "SELECT agent_id,machine,ts,op,path,sensitivity,src,user_name FROM events WHERE tenant_id=@t ORDER BY id DESC LIMIT @l";
             cmd.Parameters.AddWithValue("@t", tenantId);
             cmd.Parameters.AddWithValue("@l", limit);
             using var r = cmd.ExecuteReader();
@@ -333,7 +335,7 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
                     r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
                     r.IsDBNull(2) ? "" : r.GetString(2), r.IsDBNull(3) ? "" : r.GetString(3),
                     r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
-                    r.IsDBNull(6) ? null : r.GetString(6)));
+                    r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7)));
             return list;
         }
     }
@@ -579,7 +581,7 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
         {
             var list = new List<TenantEvent>();
             using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT agent_id,machine,ts,op,path,sensitivity,src FROM events " +
+            cmd.CommandText = "SELECT agent_id,machine,ts,op,path,sensitivity,src,user_name FROM events " +
                 "WHERE tenant_id=@t AND (@a IS NULL OR agent_id=@a) AND ts>=@f AND ts<=@to ORDER BY id DESC LIMIT @l";
             cmd.Parameters.AddWithValue("@t", tenantId);
             cmd.Parameters.AddWithValue("@a", (object?)agentId ?? DBNull.Value);
@@ -592,7 +594,7 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
                     r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
                     r.IsDBNull(2) ? "" : r.GetString(2), r.IsDBNull(3) ? "" : r.GetString(3),
                     r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
-                    r.IsDBNull(6) ? null : r.GetString(6)));
+                    r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7)));
             return list;
         }
     }

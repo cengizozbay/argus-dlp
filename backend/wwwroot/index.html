@@ -625,6 +625,7 @@
     else if(e.op!=="usb_insert"&&e.op!=="usb_remove") kv.push(["Konum",b.dir||"—",false]);
     if(e.path) kv.push(["Tam yol",e.path,false]);
     if(e.sensitivity) kv.push(["Hassas içerik",e.sensitivity,true]);
+    if(e.user) kv.push(["Kullanıcı (yapan)",e.user,false]);
     kv.push(["Makine",e.machine||"—",false]);
     kv.push(["Zaman",fmtTs(e.ts)+"  ("+ago(e.ts)+")",false]);
     return '<div class="evdetail">'+kv.map(function(x){ return '<span class="evd-k">'+esc(x[0])+'</span><span class="evd-v'+(x[2]?" hot":"")+'">'+esc(x[1])+'</span>'; }).join("")+'</div>';
@@ -637,13 +638,13 @@
     v.innerHTML=
       '<div class="head"><div><h1>Dosya Olayları</h1><div class="sub">Kişi ve tarihe göre dosya hareketleri · satıra tıkla → detay</div></div><div class="seg" data-cat-field="op">'+segBtns+'</div></div>'+
       reportToolbar(person,from,to)+
-      '<div class="panel"><div class="tw"><table><thead><tr><th>Zaman</th><th>Makine</th><th>İşlem</th><th>Dosya · tıkla → detay</th></tr></thead><tbody class="rp-body"><tr><td colspan="4"><div class="empty">Yükleniyor…</div></td></tr></tbody></table></div></div>';
+      '<div class="panel"><div class="tw"><table><thead><tr><th>Zaman</th><th>Makine / Kullanıcı</th><th>İşlem</th><th>Dosya · tıkla → detay</th></tr></thead><tbody class="rp-body"><tr><td colspan="4"><div class="empty">Yükleniyor…</div></td></tr></tbody></table></div></div>';
     function draw(events){
       v.querySelector(".rp-body").innerHTML= events.length? events.map(function(e){
         var k=evKey(e), open=!!openEv[k], b=pathBits(e.path);
         var main='<tr class="ev-row'+(open?" open":"")+'" data-op="'+esc(e.op)+'" data-sens="'+(e.sensitivity?"1":"0")+'" data-k="'+esc(k)+'">'+
           '<td class="mono" style="font-size:11.5px">'+fmtTs(e.ts)+'<div class="u2">'+ago(e.ts)+'</div></td>'+
-          '<td>'+esc(e.machine)+'</td>'+
+          '<td>'+esc(e.machine)+(e.user?'<div class="u2">'+esc(e.user)+'</div>':'')+'</td>'+
           '<td><span class="op '+esc(e.op)+'">'+opLabel(e.op)+'</span></td>'+
           '<td><span class="fname">'+esc(b.name||e.path||"—")+'</span>'+sensBadge(e)+'<span class="chev">▾</span></td></tr>';
         var det='<tr class="ev-detail" style="display:'+(open?"":"none")+'"><td colspan="4">'+fileDetail(e)+'</td></tr>';

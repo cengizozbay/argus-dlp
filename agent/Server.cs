@@ -53,7 +53,7 @@ public sealed class AgentConfig
     }
 }
 
-public sealed record OutEvent(string Ts, string? Type, string? Op, string? Exe, string? App, string? Title, string? Path, string? Sensitivity = null, string? Source = null);
+public sealed record OutEvent(string Ts, string? Type, string? Op, string? Exe, string? App, string? Title, string? Path, string? Sensitivity = null, string? Source = null, string? User = null);
 public sealed record WebUsageOut(string Site, string Domain, string? Url, string? Title, long Seconds, bool Incognito, string Ts);
 public sealed record AppUsageOut(string App, string Exe, long Seconds, string Ts);
 public sealed record DocUsageOut(string Name, string App, long Seconds, string Ts);

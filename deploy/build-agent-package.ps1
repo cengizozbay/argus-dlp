@@ -20,8 +20,9 @@ dotnet publish "$root\webhost\Argus.WebHost.csproj" @scArgs -o "$stage\webhost" 
 Remove-Item "$stage\agent\*.pdb", "$stage\webhost\*.pdb" -Force -ErrorAction SilentlyContinue
 
 Copy-Item "$root\extension\*" "$stage\extension" -Recurse -Force
-Copy-Item "$root\deploy\pkg-install.ps1"             "$stage\install.ps1"        -Force
-Copy-Item "$root\deploy\install-webhost.ps1"         "$stage\install-webhost.ps1" -Force
+Copy-Item "$root\deploy\pkg-install.ps1"             "$stage\install.ps1"            -Force
+Copy-Item "$root\deploy\install-webhost.ps1"         "$stage\install-webhost.ps1"    -Force
+Copy-Item "$root\deploy\install-fileserver.ps1"      "$stage\install-fileserver.ps1" -Force
 
 @"
 ARGUS ENDPOINT AGENT — KURULUM PAKETİ
