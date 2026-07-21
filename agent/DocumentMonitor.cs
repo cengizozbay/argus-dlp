@@ -19,6 +19,19 @@ public static class DocumentMonitor
     public static bool IsDocApp(string exe) => DocApps.ContainsKey(exe);
     public static string AppName(string exe) => DocApps.TryGetValue(exe, out var n) ? n : exe;
 
+    // Tarayıcıda açılan belgeleri de Belge'ye düşürmek için: ad bir belge dosyası uzantısıyla mı bitiyor?
+    private static readonly HashSet<string> DocExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".xlsm", ".csv", ".pptx", ".ppt",
+        ".odt", ".ods", ".odp", ".rtf", ".txt",
+    };
+    public static bool IsDocumentFile(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        var dot = name.LastIndexOf('.');
+        return dot > 0 && DocExtensions.Contains(name.Substring(dot));
+    }
+
     // Başlıktan belge adını çıkar: ilk " - " öncesi (çoğu uygulamada belge adı en başta).
     // Ör. "Bütçe.xlsx - Excel" → "Bütçe.xlsx" · "prog.cs - proje - Visual Studio Code" → "prog.cs".
     public static string? DocName(string? title)

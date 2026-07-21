@@ -451,6 +451,17 @@ internal static class Program
                 ds.Seconds += SampleSeconds; ds.IntervalSeconds += SampleSeconds; ds.LastSeen = DateTime.Now;
             }
         }
+        // Tarayıcıda açılan belge dosyaları da (PDF/Office) Belge'ye düşsün — başlık dosya adıyla bitiyorsa.
+        else if (BrowserMonitor.IsBrowser(exe))
+        {
+            var doc = DocumentMonitor.DocName(title);
+            if (doc is not null && DocumentMonitor.IsDocumentFile(doc))
+            {
+                if (!DocStats.TryGetValue(doc, out var ds)) { ds = new DocStat(); DocStats[doc] = ds; }
+                ds.App = friendly;   // ör. "Google Chrome" / "Microsoft Edge"
+                ds.Seconds += SampleSeconds; ds.IntervalSeconds += SampleSeconds; ds.LastSeen = DateTime.Now;
+            }
+        }
 
         // Tarayıcıysa aktif sekmenin URL'sini yakala (gizli mod dahil), süreyi domaine yaz.
         if (BrowserMonitor.IsBrowser(exe))
