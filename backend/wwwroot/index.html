@@ -340,7 +340,7 @@
   document.getElementById("reload").addEventListener("click",refresh);
   var q=document.getElementById("q"); q.addEventListener("input",function(){ gq=q.value.trim().toLowerCase(); applyFilters(); });
 
-  var state={agents:[],alerts:[],events:[],web:[],apps:[],appusage:[]}, gq="", view="ozet", seg={};
+  var state={agents:[],alerts:[],events:[],web:[],apps:[],appusage:[],settings:null}, gq="", view="ozet", seg={};
   var C={accent:"#0E9E8E",good:"#17A34A",warn:"#C07C00",crit:"#DC3B34",info:"#2563C9"};
   var hist={online:[],active:[],alerts:[],deletes:[],copies:[]}, uid=0;
 
@@ -474,14 +474,47 @@
       '<div class="db-presets"><button data-days="0">Bugün</button><button data-days="6">7 gün</button><button data-days="29">30 gün</button></div>'+
       '<button class="btn rp-apply">Uygula</button></div>';
   }
-  function wireReport(v,onData,endpoint){
-    endpoint=endpoint||"/report/web";
+  // Kişi + tarih filtresini bir ekrana bağlar ve veriyi /report/* ucundan çeker.
+  // opts.state    : filtrenin saklanacağı nesne (varsayılan aktFilter — Aktivite sekmeleri ortak kullanır)
+  // opts.pageSize : >0 ise sayfalama açılır; onData'ya ikinci argüman {hasMore, loadMore} gelir.
+  //                 Böylece ekran sunucunun tavanına takılmaz, "daha fazla yükle" ile geçmişe iner.
+  // opts.extra    : ek sorgu dizesi üreten fonksiyon (ör. "&op=usb")
+  function wireReport(v,onData,endpoint,opts){
+    endpoint=endpoint||"/report/web"; opts=opts||{};
+    var st=opts.state||aktFilter, pageSize=opts.pageSize||0;
     var person=v.querySelector(".rp-person"),from=v.querySelector(".rp-from"),to=v.querySelector(".rp-to"),apply=v.querySelector(".rp-apply");
-    function run(){ aktFilter.person=person.value; aktFilter.from=from.value; aktFilter.to=to.value; api(endpoint+"?agent="+encodeURIComponent(person.value)+"&from="+from.value+"&to="+to.value).then(onData).catch(function(){ onData([]); }); }
+    var page=0, acc=[];
+    function load(more){
+      if(!more){ page=0; acc=[]; }
+      st.person=person.value; st.from=from.value; st.to=to.value;
+      var q=endpoint+"?agent="+encodeURIComponent(person.value)+"&from="+from.value+"&to="+to.value+(opts.extra?opts.extra():"");
+      if(pageSize) q+="&limit="+pageSize+"&offset="+(page*pageSize);
+      api(q).then(function(rows){
+        rows=rows||[];
+        acc = more ? acc.concat(rows) : rows;
+        onData(acc,{ hasMore: pageSize>0 && rows.length===pageSize, loadMore: function(){ page++; load(true); } });
+      }).catch(function(){ onData(more?acc:[],{hasMore:false}); });
+    }
+    function run(){ load(false); }
     apply.onclick=run; person.onchange=run;
     v.querySelectorAll(".db-presets button").forEach(function(b){ b.onclick=function(){ var d=+b.getAttribute("data-days"); from.value=daysAgo(d); to.value=today(); run(); }; });
     run();
+    return { reload: run };
   }
+  // "Daha fazla yükle" düğmesi — sayfalı ekranların altına konur.
+  function moreBtn(page){
+    return page && page.hasMore ? '<div style="padding:12px;text-align:center"><button class="btn rp-more">Daha fazla yükle</button></div>' : '';
+  }
+  function wireMore(v,page){
+    var b=v.querySelector(".rp-more");
+    if(b) b.onclick=function(){ b.disabled=true; b.textContent="Yükleniyor…"; page.loadMore(); };
+  }
+  function csvDownload(name,head,rows,rowFn){
+    var body=rows.map(rowFn).join("\n");
+    var blob=new Blob(["﻿"+head+"\n"+body],{type:"text/csv;charset=utf-8"});
+    var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  }
+  function csvCell(s){ return '"'+String(s==null?"":s).replace(/"/g,'""')+'"'; }
   function webCellR(x){ return webCell({domain:x.domain||"",url:x.url,title:x.title||x.site}); }
   var CATS={
     "Sosyal Medya":{c:"#4B9BF0",d:["facebook.com","instagram.com","twitter.com","x.com","tiktok.com","linkedin.com","snapchat.com","reddit.com","pinterest.com","whatsapp.com","web.whatsapp.com","telegram.org","discord.com","threads.net"]},
@@ -638,8 +671,8 @@
     v.innerHTML=
       '<div class="head"><div><h1>Dosya Olayları</h1><div class="sub">Kişi ve tarihe göre dosya hareketleri · satıra tıkla → detay</div></div><div class="seg" data-cat-field="op">'+segBtns+'</div></div>'+
       reportToolbar(person,from,to)+
-      '<div class="panel"><div class="tw"><table><thead><tr><th>Zaman</th><th>Makine / Kullanıcı</th><th>İşlem</th><th>Dosya · tıkla → detay</th></tr></thead><tbody class="rp-body"><tr><td colspan="4"><div class="empty">Yükleniyor…</div></td></tr></tbody></table></div></div>';
-    function draw(events){
+      '<div class="panel"><div class="tw"><table><thead><tr><th>Zaman</th><th>Makine / Kullanıcı</th><th>İşlem</th><th>Dosya · tıkla → detay</th></tr></thead><tbody class="rp-body"><tr><td colspan="4"><div class="empty">Yükleniyor…</div></td></tr></tbody></table></div><div class="rp-foot"></div></div>';
+    function draw(events,page){
       v.querySelector(".rp-body").innerHTML= events.length? events.map(function(e){
         var k=evKey(e), open=!!openEv[k], b=pathBits(e.path);
         var main='<tr class="ev-row'+(open?" open":"")+'" data-op="'+esc(e.op)+'" data-sens="'+(e.sensitivity?"1":"0")+'" data-k="'+esc(k)+'">'+
@@ -656,9 +689,12 @@
         r.classList.toggle("open",now);
         if(d&&d.classList.contains("ev-detail")) d.style.display=now?"":"none";
       }; });
+      v.querySelector(".rp-foot").innerHTML=moreBtn(page);
+      wireMore(v,page);
+      v.querySelector(".head .sub").textContent=events.length+" olay · kişi ve tarihe göre · satıra tıkla → detay";
       bindDynamic(); applyFilters();
     }
-    wireReport(v,draw,"/report/events");
+    wireReport(v,draw,"/report/events",{pageSize:500});
   }
 
   // ---------- WEB AKTİVİTESİ ----------
@@ -800,11 +836,37 @@
   }
 
   // ---------- UYARILAR ----------
+  // Uyarılar: canlı /alerts YALNIZ son 200 kaydı verir → geçmişe bakılamıyordu.
+  // Bu ekran artık /report/alerts üzerinden kişi + tarih filtreli ve sayfalı çalışır.
+  var alertFilter={person:"",from:daysAgo(29),to:today()};
+  var alertRows=[];
   function renderUyarilar(){
-    var rows=state.alerts.map(alertRow).join("") || '<div class="empty"><b>Uyarı yok</b>Kurallar tetiklenince burada listelenir.</div>';
-    document.getElementById("v-uyarilar").innerHTML=
-      headHtml("Uyarılar",state.alerts.length+" kayıt · en yeni üstte",[["Tümü",null],["Kritik","critical"],["Uyarı","warning"],["Bilgi","info"]],"uyarilar","sev")+
-      '<div class="panel"><div class="feed">'+rows+'</div></div>';
+    var v=document.getElementById("v-uyarilar");
+    var segs=[["Tümü",null],["Kritik","critical"],["Uyarı","warning"],["Bilgi","info"]];
+    var segBtns=segs.map(function(s,i){ return '<button class="'+(i===0?"on":"")+'" data-seg="uyarilar" data-cat="'+(s[1]===null?"":s[1])+'">'+s[0]+'</button>'; }).join("");
+    v.innerHTML=
+      '<div class="head"><div><h1>Uyarılar</h1><div class="sub">Kişi ve tarihe göre uyarı geçmişi · en yeni üstte</div></div>'+
+      '<div style="display:flex;gap:8px;align-items:center"><div class="seg" data-cat-field="sev">'+segBtns+'</div><button class="btn rp-csv">CSV indir</button></div></div>'+
+      reportToolbar(alertFilter.person,alertFilter.from,alertFilter.to)+
+      '<div class="panel"><div class="feed rp-body"><div class="empty">Yükleniyor…</div></div></div>'+
+      '<div class="rp-foot"></div>';
+    wireReport(v,function(rows,page){
+      alertRows=rows;
+      v.querySelector(".rp-body").innerHTML = rows.length
+        ? rows.map(alertRow).join("")
+        : '<div class="empty"><b>Bu kişi/aralıkta uyarı yok</b>Tarih aralığını genişletmeyi deneyin.</div>';
+      v.querySelector(".rp-foot").innerHTML=moreBtn(page);
+      wireMore(v,page);
+      v.querySelector(".head .sub").textContent=rows.length+" kayıt · kişi ve tarihe göre uyarı geçmişi";
+      bindDynamic(); applyFilters();
+    },"/report/alerts",{state:alertFilter,pageSize:300});
+    v.querySelector(".rp-csv").onclick=function(){
+      csvDownload("argus-uyarilar.csv","Zaman,Makine,Kullanici,Onem,Tip,Kural,Baslik,Detay",alertRows,function(t){
+        var a=t.alert||{};
+        return [csvCell(fmtTs(t.receivedAt)),csvCell(t.machine||a.machine),csvCell(a.user),csvCell(a.severity),
+                csvCell(a.type),csvCell(a.rule),csvCell(a.title),csvCell(a.detail)].join(",");
+      });
+    };
   }
   function alertRow(ta){
     var a=ta.alert,sev=a.severity||"info",lbl=sev==="critical"?"Kritik":sev==="warning"?"Uyarı":"Bilgi";
@@ -815,21 +877,56 @@
   }
 
   // ---------- VERİ GÜVENLİĞİ (DLP) ----------
-  function usbEvents(){ return state.events.filter(function(e){ return e.op && e.op.slice(0,3)==="usb"; }); }
-  function dlpAlertsList(){ return state.alerts.filter(function(a){ var t=(a.alert&&a.alert.type)||""; return t==="usb_exfil"||t==="mass_copy"||t==="mass_delete"||t==="sensitive_exfil"||t==="web_policy"; }); }
-  function sensEvents(){ return state.events.filter(function(e){ return e.sensitivity; }); }
+  // ESKİDEN: bu ekran canlı /events + /alerts anlık görüntüsünden (son 200 kayıt) besleniyordu.
+  // 300 makinede son 200 olay birkaç dakikayı kapsar → dünkü USB hareketi ekranda YOKTU.
+  // ARTIK: kişi + tarih filtreli, doğrudan veritabanı geçmişinden (/report/*) okur.
+  function isDlpAlert(a){ var t=(a.alert&&a.alert.type)||""; return t==="usb_exfil"||t==="mass_copy"||t==="mass_delete"||t==="sensitive_exfil"||t==="web_policy"; }
+  var dlpFilter={person:"",from:daysAgo(29),to:today()};
+  var dlpData={usb:[],sens:[],alerts:[]};
+
   function renderGuvenlik(){
-    var ue=usbEvents();
+    var v=document.getElementById("v-guvenlik");
+    v.innerHTML=
+      '<div class="head"><div><h1>Veri Güvenliği</h1><div class="sub">Veri sızıntısı riski · hassas içerik, USB, toplu kopyalama ve silme izleme (DLP)</div></div><button class="btn rp-csv">CSV indir</button></div>'+
+      reportToolbar(dlpFilter.person,dlpFilter.from,dlpFilter.to)+
+      '<div id="dlpBody"><div class="panel"><div class="empty">Yükleniyor…</div></div></div>';
+    var person=v.querySelector(".rp-person"),from=v.querySelector(".rp-from"),to=v.querySelector(".rp-to"),apply=v.querySelector(".rp-apply");
+    function qs(extra){ return "?agent="+encodeURIComponent(person.value)+"&from="+from.value+"&to="+to.value+extra; }
+    function load(){
+      dlpFilter.person=person.value; dlpFilter.from=from.value; dlpFilter.to=to.value;
+      var nope=function(){ return []; };
+      Promise.all([
+        api("/report/events"+qs("&op=usb&limit=2000")).catch(nope),
+        api("/report/events"+qs("&sensitive=true&limit=2000")).catch(nope),
+        api("/report/alerts"+qs("&limit=1000")).catch(nope)
+      ]).then(function(r){
+        dlpData={usb:r[0]||[], sens:r[1]||[], alerts:(r[2]||[]).filter(isDlpAlert)};
+        drawGuvenlik();
+      });
+    }
+    apply.onclick=load; person.onchange=load;
+    v.querySelectorAll(".db-presets button").forEach(function(b){ b.onclick=function(){ var d=+b.getAttribute("data-days"); from.value=daysAgo(d); to.value=today(); load(); }; });
+    v.querySelector(".rp-csv").onclick=function(){
+      csvDownload("argus-veri-guvenligi.csv","Zaman,Makine,Kullanici,Islem,Hassas,Yol",
+        dlpData.usb.concat(dlpData.sens),function(e){
+          return [csvCell(fmtTs(e.ts)),csvCell(e.machine),csvCell(e.user),csvCell(opLabel(e.op)),
+                  csvCell(e.sensitivity),csvCell(e.path)].join(",");
+        });
+    };
+    load();
+  }
+
+  function drawGuvenlik(){
+    if(!document.getElementById("dlpBody")) return;   // ekran henüz kurulmadı (canlı tik erken geldi)
+    var ue=dlpData.usb;
     var ins=ue.filter(function(e){return e.op==="usb_insert";}).length;
     var cop=ue.filter(function(e){return e.op==="usb_copy";}).length;
-    var se=sensEvents();
+    var se=dlpData.sens;
     var sensN=se.length;
-    var da=dlpAlertsList();
+    var da=dlpData.alerts;
     var critCopy=da.filter(function(a){var t=a.alert.type;return t==="usb_exfil"||t==="mass_copy";}).length;
     var critDel=da.filter(function(a){return a.alert.type==="mass_delete";}).length;
     var critSens=da.filter(function(a){return a.alert.type==="sensitive_exfil";}).length;
-
-    var nd=document.getElementById("navDlp"); if(nd){ nd.textContent=da.length; nd.style.display=da.length?"":"none"; }
 
     var lvl=(sensN>0||cop>0||critCopy>0||critSens>0||da.some(function(a){return a.alert.severity==="critical";}))?"high"
            :(ins>0||ue.length>0||da.length>0)?"mid":"low";
@@ -862,19 +959,45 @@
     var feed=da.length? da.slice(0,8).map(alertRow).join("") : '<div class="empty"><b>DLP uyarısı yok</b>Toplu kopyalama/silme veya USB sızıntısı tetiklenince burada görünür.</div>';
     var feedPanel='<div class="panel"><div class="ph"><b>Veri Güvenliği Uyarıları</b><button class="link" data-go="uyarilar">Tümü →</button></div><div class="feed">'+feed+'</div></div>';
 
-    var srows=se.slice(0,120).map(function(e){
+    var srows=se.slice(0,500).map(function(e){
       return '<tr><td class="mono" style="font-size:11.5px">'+fmtTs(e.ts)+'</td><td class="time">'+ago(e.ts)+'</td><td>'+esc(e.machine)+'</td><td><span class="op '+esc(e.op)+'">'+opLabel(e.op)+'</span></td><td><span class="sens">⚠ '+esc(e.sensitivity)+'</span></td><td><span class="path">'+esc(e.path||"")+'</span></td></tr>';
     }).join("") || emptyRow(6,"Hassas içerik tespit edilmedi — TC kimlik / IBAN / kart içeren bir dosya oluşturup kopyalayın");
     var sensTbl='<div class="panel"><div class="ph"><b>Hassas İçerik Taşıma</b><span class="bd">içeriğinde TC kimlik · IBAN · kart · anahtar kelime bulunan dosyalar</span></div><div class="tw"><table><thead><tr><th>Zaman Damgası</th><th>Ne zaman</th><th>Makine</th><th>İşlem</th><th>Hassas Veri</th><th>Dosya Yolu</th></tr></thead><tbody>'+srows+'</tbody></table></div></div>';
 
-    var rows=ue.slice(0,120).map(function(e){
+    var rows=ue.slice(0,500).map(function(e){
       return '<tr data-op="'+esc(e.op)+'"><td class="mono" style="font-size:11.5px">'+fmtTs(e.ts)+'</td><td class="time">'+ago(e.ts)+'</td><td>'+esc(e.machine)+'</td><td><span class="op '+esc(e.op)+'">'+opLabel(e.op)+'</span></td><td>'+fileCell(e)+'</td></tr>';
-    }).join("") || emptyRow(5,"Henüz USB hareketi yok — bir USB bellek takıp içine dosya kopyalayın");
-    var tbl='<div class="panel"><div class="ph"><b>USB Olay Akışı</b><span class="bd">takılma · çıkarılma · medyaya kopyalama</span></div><div class="tw"><table><thead><tr><th>Zaman Damgası</th><th>Ne zaman</th><th>Makine</th><th>Olay</th><th>Yol / Aygıt</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+    }).join("") || emptyRow(5,"Bu kişi/aralıkta USB hareketi yok — tarih aralığını genişletmeyi deneyin");
+    var tbl='<div class="panel"><div class="ph"><b>USB Olay Akışı</b><span class="bd">takılma · çıkarılma · medyaya kopyalama · seçili aralık</span></div><div class="tw"><table><thead><tr><th>Zaman Damgası</th><th>Ne zaman</th><th>Makine</th><th>Olay</th><th>Yol / Aygıt</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 
-    document.getElementById("v-guvenlik").innerHTML=
-      '<div class="head"><div><h1>Veri Güvenliği</h1><div class="sub">Veri sızıntısı riski · hassas içerik, USB, toplu kopyalama ve silme izleme (DLP)</div></div></div>'+
-      risk+kpis+'<div class="grid">'+leadPanel+feedPanel+'</div>'+sensTbl+tbl;
+    document.getElementById("dlpBody").innerHTML=
+      risk+kpis+usbPolicyPanel()+'<div class="grid">'+leadPanel+feedPanel+'</div>'+sensTbl+tbl;
+    bindDynamic(); applyFilters();
+  }
+
+  // USB politikası UYGULAMA DURUMU — "engelle dedim ama tuttu mu?" sorusunun cevabı.
+  // Agent, SYSTEM servisinin registry'ye gerçekten yazdığı politikayı geri bildirir (usbPolicy).
+  function usbPolicyLabel(p){
+    return {block:"Engelli",readonly:"Salt-okunur",allow:"Serbest"}[p||""]||"Bilinmiyor";
+  }
+  function usbPolicyPanel(){
+    var want=(state.settings&&state.settings.usbAccess)||"";
+    if(!want) return "";
+    var ag=state.agents||[];
+    if(!ag.length) return "";
+    var applied=ag.filter(function(a){ return (a.usbPolicy||"")===want; }).length;
+    var pending=ag.filter(function(a){ return (a.usbPolicy||"")!==want; });
+    var ok=pending.length===0;
+    var list=pending.slice(0,12).map(function(a){
+      return '<tr><td>'+esc(a.machine)+'</td><td class="u">'+esc(a.user||"")+'</td><td>'+
+        (a.online?'<span class="chip info">çevrimiçi</span>':'<span class="chip">çevrimdışı</span>')+'</td><td>'+
+        '<span class="chip '+(a.usbPolicy?"warning":"")+'">'+esc(usbPolicyLabel(a.usbPolicy))+'</span></td></tr>';
+    }).join("");
+    var body= ok
+      ? '<div class="empty"><b>Politika tüm uç noktalarda uygulandı</b>'+applied+'/'+ag.length+' makinede USB durumu: '+usbPolicyLabel(want)+'</div>'
+      : '<div class="tw"><table><thead><tr><th>Makine</th><th>Kullanıcı</th><th>Durum</th><th>Uygulanan</th></tr></thead><tbody>'+list+'</tbody></table></div>'+
+        '<div class="empty" style="padding-top:0">Çevrimdışı makineler açılıp agent sunucuya bağlanınca uygular. Eski agent sürümü bu bilgiyi hiç göndermez → "Bilinmiyor" görünür.</div>';
+    return '<div class="panel"><div class="ph"><b>USB Politikası — Uygulama Durumu</b>'+
+      '<span class="bd">istenen: '+usbPolicyLabel(want)+' · uygulandı: '+applied+'/'+ag.length+'</span></div>'+body+'</div>';
   }
 
   function headHtml(title,sub,segs,vname,cat){
@@ -894,6 +1017,7 @@
     v.innerHTML=ayarHead()+'<div class="empty">Yükleniyor…</div>';
     api("/settings").then(function(s){
       var monSel=function(val){ return ["auto","usn","fsw"].map(function(m){ var lbl={auto:"Otomatik (USN varsa, yoksa FSW)",usn:"USN Journal (güvenilir, admin ister)",fsw:"FileSystemWatcher (yedek)"}[m]; return '<option value="'+m+'"'+(val===m?" selected":"")+'>'+lbl+'</option>'; }).join(""); };
+      var usbAccessSel=function(val){ return ["allow","readonly","block"].map(function(m){ var lbl={allow:"Serbest — okuma ve yazma açık",readonly:"Salt-okunur — yazma KAPALI (önerilen)",block:"Engelli — hiç bağlanmaz"}[m]; return '<option value="'+m+'"'+(val===m?" selected":"")+'>'+lbl+'</option>'; }).join(""); };
       var folders=(s.watchFolders&&s.watchFolders.length)? s.watchFolders.join("\n") : "";
       var html=ayarHead()+
         '<div class="panel"><div class="ph"><b>Uyarı Eşikleri (DLP)</b><span class="bd">kayan pencerede tetiklenir</span></div><div class="fgrid">'+
@@ -913,8 +1037,9 @@
           '<div class="frow"><label>USB izleme<span class="fh">harici medya olayları</span></label><label class="toggle"><input type="checkbox" id="set-usbon"'+(s.usbMonitoring?" checked":"")+'> Açık</label></div>'+
           '<div class="frow wide"><label>İzlenen klasörler<span class="fh">her satıra bir yol · boşsa Masaüstü + Belgeler</span></label><textarea id="set-folders" placeholder="C:\\Users\\...\\Desktop&#10;\\\\Sunucu\\Ortak">'+esc(folders)+'</textarea></div>'+
         '</div></div>'+
-        '<div class="panel"><div class="ph"><b>USB Depolama Engelleme (Uygulama)</b><span class="bd">flash bellek / harici disk — çalışan veri kopyalayamaz</span></div><div class="fgrid">'+
-          '<div class="frow"><label>USB depolama<span class="fh">Engelle = kapalı; mouse/klavye/webcam etkilenmez · değişiklik ~15 sn içinde tüm makinelere uygulanır</span></label><label class="toggle"><input type="checkbox" id="set-usbblock"'+(s.usbBlocked?" checked":"")+'> Engelle</label></div>'+
+        '<div class="panel"><div class="ph"><b>USB Depolama Engelleme (Uygulama)</b><span class="bd">flash bellek / harici disk / telefon — çalışan veri kopyalayamaz</span></div><div class="fgrid">'+
+          '<div class="frow"><label>USB depolama<span class="fh">Salt-okunur = takılır, okunur ama YAZILAMAZ (sızıntıyı durdurur, kullanıcıyı mağdur etmez) · Engelli = hiç açılmaz · mouse/klavye/webcam etkilenmez · ~15 sn içinde tüm makinelere iner</span></label><select id="set-usbaccess">'+usbAccessSel(s.usbAccess||(s.usbBlocked?"block":"allow"))+'</select></div>'+
+          '<div class="frow"><label>Uygulama durumu<span class="fh">politikanın makinelerde tuttuğunu Veri Güvenliği ekranından doğrulayın</span></label><button class="btn" data-go="guvenlik">Veri Güvenliği →</button></div>'+
         '</div></div>'+
         '<div class="panel"><div class="ph"><b>Agent Davranışı</b></div><div class="fgrid">'+
           nrow("send","Gönderim aralığı (sn)",s.sendSeconds,"telemetri sıklığı · min 5")+
@@ -923,6 +1048,7 @@
         '<div class="savebar"><button class="btn" id="set-save">Kaydet</button><span class="msg" id="set-msg">'+(s.updatedAt?"Son güncelleme: "+fmtTs(s.updatedAt):"Henüz özelleştirilmedi (varsayılanlar)")+'</span></div></div>';
       v.innerHTML=html;
       document.getElementById("set-save").onclick=saveAyarlar;
+      bindDynamic();   // "Veri Güvenliği →" gibi data-go düğmeleri çalışsın
     }).catch(function(e){ v.innerHTML=ayarHead()+'<div class="empty">Ayarlar yüklenemedi ('+e.message+')</div>'; });
   }
   function numOf(id,def){ var el=document.getElementById("set-"+id); var n=parseInt(el&&el.value,10); return isNaN(n)?def:n; }
@@ -937,7 +1063,8 @@
       sendSeconds:Math.max(5,numOf("send",15)), idleThresholdSeconds:Math.max(5,numOf("idle",60)),
       fileMonitor:document.getElementById("set-mon").value,
       usbMonitoring:document.getElementById("set-usbon").checked,
-      usbBlocked:document.getElementById("set-usbblock").checked,
+      usbAccess:document.getElementById("set-usbaccess").value,
+      usbBlocked:document.getElementById("set-usbaccess").value==="block",   // eski agent'lar için geriye uyum
       contentScan:document.getElementById("set-scan").checked,
       watchFolders:folders,
       sensitiveKeywords:keywords
@@ -1237,15 +1364,23 @@
   }
 
   // ---------- view switching + filters ----------
-  function renderAll(){ renderOzet(); renderPanel(); renderPersonel(); renderUyarilar(); renderGuvenlik();
+  // 5 sn'lik canlı yenileme YALNIZ anlık ekranları çizer. Uyarılar ve Veri Güvenliği artık
+  // tarih filtreli geçmiş ekranı → her tikte yeniden çizilirse kullanıcının filtresi/kaydırması sıfırlanır.
+  // Onlar ekrana girildiğinde ve "Uygula"ya basıldığında yüklenir.
+  function renderAll(){ renderOzet(); renderPanel(); renderPersonel();
     if(view==="agentlar") renderAgentlar();
+    if(view==="guvenlik") drawGuvenlik();   // canlı rozet/uygulama durumu tazelensin (veri yeniden çekilmez)
     var n=document.getElementById("navAlerts"); var c=state.alerts.length; n.textContent=c; n.style.display=c?"":"none";
+    var da=state.alerts.filter(isDlpAlert).length;
+    var nd=document.getElementById("navDlp"); if(nd){ nd.textContent=da; nd.style.display=da?"":"none"; }
     bindDynamic(); applyFilters();
   }
   function switchView(v){ view=v;
     if(v==="aktivite") renderAktivite(); else if(v==="ayarlar") renderAyarlar();
     else if(v==="agentlar") renderAgentlar(); else if(v==="kullanicilar") renderKullanicilar();
     else if(v==="dosya") renderDosya();
+    else if(v==="uyarilar") renderUyarilar();
+    else if(v==="guvenlik") renderGuvenlik();
     else if(v==="firmalar") renderFirmalar();
     else if(v==="gunluk") renderGunluk();
     document.querySelectorAll(".view").forEach(function(x){ x.classList.toggle("on",x.id==="v-"+v); });
@@ -1277,8 +1412,11 @@
 
   function refresh(){
     if(!session) return;
-    Promise.all([api("/agents"),api("/alerts"),api("/events"),api("/web"),api("/apps"),api("/appusage")]).then(function(res){
+    var soft=function(){ return null; };
+    Promise.all([api("/agents"),api("/alerts"),api("/events"),api("/web"),api("/apps"),api("/appusage"),
+                 api("/settings").catch(soft)]).then(function(res){
       state.agents=res[0]; state.alerts=res[1]; state.events=res[2]; state.web=res[3]; state.apps=res[4]; state.appusage=res[5];
+      state.settings=res[6]||state.settings;
       pushHist(); renderAll(); setStatus(true);
     }).catch(function(e){ if(e.message!=="401") setStatus(false,"bağlanamadı ("+e.message+")"); });
   }

@@ -130,17 +130,35 @@ static (HashSet<string> ids, HashSet<string> machines)? DeptScope(PanelUser u, I
             av.Select(a => a.Machine).ToHashSet(StringComparer.OrdinalIgnoreCase));
 }
 
-// "2026-06-01" gibi tarihleri UTC gün sınırlarına (ISO "o") çevirir.
-static (string from, string to) ParseRange(string? from, string? to)
+// Saha saat dilimi. Uç nokta olayları AGENT'ın yerel saatiyle (Türkiye) damgalanır; sunucu ise
+// Ubuntu'da genelde UTC çalışır. Sınırları sunucunun yerel saatiyle kurarsak "bugün" filtresi kayar.
+// ARGUS_TZ ile değiştirilebilir (IANA adı, ör. "Europe/Istanbul").
+var fieldTz = ResolveFieldTz(Environment.GetEnvironmentVariable("ARGUS_TZ"));
+app.Logger.LogInformation("Saha saat dilimi (rapor sınırları): {Tz}", fieldTz.Id);
+
+static TimeZoneInfo ResolveFieldTz(string? id)
+{
+    foreach (var candidate in new[] { id, "Europe/Istanbul", "Turkey Standard Time" })
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) continue;
+        try { return TimeZoneInfo.FindSystemTimeZoneById(candidate); } catch { }
+    }
+    return TimeZoneInfo.Local;
+}
+
+// "2026-06-01" gibi tarihleri saha gün sınırlarına çevirir.
+//  from/to  : olay tablolarının metin damgalarıyla karşılaştırmak için ISO metin (sözlüksel karşılaştırma)
+//  fromUtc/toUtc : gerçek timestamp sütunları (alerts.received_at) için UTC
+static (string from, string to, DateTime fromUtc, DateTime toUtc) ParseRange(string? from, string? to, TimeZoneInfo tz)
 {
     var inv = System.Globalization.CultureInfo.InvariantCulture;
     var f = string.IsNullOrWhiteSpace(from) ? DateTime.UtcNow.Date.AddDays(-7) : DateTime.Parse(from, inv).Date;
     var t = string.IsNullOrWhiteSpace(to) ? DateTime.UtcNow.Date : DateTime.Parse(to, inv).Date;
-    // Zaman damgaları yerel saatle (+offset) tutuluyor → sınırları da yerel yorumla, aksi halde
-    // saat farkı yüzünden "bugün" filtresi sabahki kayıtları kaçırır.
-    var fLoc = DateTime.SpecifyKind(f, DateTimeKind.Local);
-    var tLoc = DateTime.SpecifyKind(t.AddDays(1).AddTicks(-1), DateTimeKind.Local);
-    return (fLoc.ToString("o"), tLoc.ToString("o"));
+    var fWall = f;                              // gün başı (saha duvar saati)
+    var tWall = t.AddDays(1).AddTicks(-1);      // gün sonu
+    var fOff = new DateTimeOffset(fWall, tz.GetUtcOffset(fWall));
+    var tOff = new DateTimeOffset(tWall, tz.GetUtcOffset(tWall));
+    return (fOff.ToString("o"), tOff.ToString("o"), fOff.UtcDateTime, tOff.UtcDateTime);
 }
 
 var v1 = app.MapGroup("/api/v1");
@@ -347,7 +365,7 @@ v1.MapGet("/report/web", (HttpContext ctx, IStore s, string? agent, string? from
 {
     var a = PanelAuth(ctx, s);
     if (a is null) return Results.Unauthorized();
-    var (f, to2) = ParseRange(from, to);
+    var (f, to2, _, _) = ParseRange(from, to, fieldTz);
     return Results.Ok(s.WebReport(a.Value.tenant.Id, string.IsNullOrWhiteSpace(agent) ? null : agent, f, to2, ViewerDept(a.Value.user)));
 });
 
@@ -356,7 +374,7 @@ v1.MapGet("/report/app", (HttpContext ctx, IStore s, string? agent, string? from
 {
     var a = PanelAuth(ctx, s);
     if (a is null) return Results.Unauthorized();
-    var (f, to2) = ParseRange(from, to);
+    var (f, to2, _, _) = ParseRange(from, to, fieldTz);
     return Results.Ok(s.AppReport(a.Value.tenant.Id, string.IsNullOrWhiteSpace(agent) ? null : agent, f, to2, ViewerDept(a.Value.user)));
 });
 
@@ -365,17 +383,41 @@ v1.MapGet("/report/doc", (HttpContext ctx, IStore s, string? agent, string? from
 {
     var a = PanelAuth(ctx, s);
     if (a is null) return Results.Unauthorized();
-    var (f, to2) = ParseRange(from, to);
+    var (f, to2, _, _) = ParseRange(from, to, fieldTz);
     return Results.Ok(s.DocReport(a.Value.tenant.Id, string.IsNullOrWhiteSpace(agent) ? null : agent, f, to2, ViewerDept(a.Value.user)));
 });
 
 // Rapor: tarih aralığında (ve isteğe bağlı kişi bazında) dosya olayları.
-v1.MapGet("/report/events", (HttpContext ctx, IStore s, string? agent, string? from, string? to) =>
+//   op        : tek işlem (delete/copy/usb_copy…) ya da "usb" (tüm USB olayları)
+//   sensitive : yalnız hassas içerik tespit edilen olaylar
+//   limit/offset : sayfalama — panel "daha fazla yükle" ile geçmişe iner (eski 500 tavanı kalktı)
+v1.MapGet("/report/events", (HttpContext ctx, IStore s, string? agent, string? from, string? to,
+                             string? op, bool? sensitive, int? limit, int? offset) =>
 {
     var a = PanelAuth(ctx, s);
     if (a is null) return Results.Unauthorized();
-    var (f, to2) = ParseRange(from, to);
-    var list = s.EventsInRange(a.Value.tenant.Id, string.IsNullOrWhiteSpace(agent) ? null : agent, f, to2, 500);
+    var (f, to2, _, _) = ParseRange(from, to, fieldTz);
+    var take = Math.Clamp(limit ?? 500, 1, 5000);
+    var list = s.EventsInRange(a.Value.tenant.Id, string.IsNullOrWhiteSpace(agent) ? null : agent, f, to2,
+        take, string.IsNullOrWhiteSpace(op) ? null : op, sensitive == true, Math.Max(0, offset ?? 0));
+    var sc = DeptScope(a.Value.user, s);
+    if (sc is not null) list = list.Where(x => sc.Value.ids.Contains(x.AgentId)).ToList();
+    return Results.Ok(list);
+});
+
+// Rapor: tarih aralığında (ve isteğe bağlı kişi/tip/önem) UYARI GEÇMİŞİ.
+// Canlı /alerts yalnız son 200 kaydı verir — geriye dönük bakış bu uçtan yapılır.
+v1.MapGet("/report/alerts", (HttpContext ctx, IStore s, string? agent, string? from, string? to,
+                             string? type, string? severity, int? limit, int? offset) =>
+{
+    var a = PanelAuth(ctx, s);
+    if (a is null) return Results.Unauthorized();
+    var (_, _, fUtc, tUtc) = ParseRange(from, to, fieldTz);
+    var take = Math.Clamp(limit ?? 300, 1, 2000);
+    var list = s.AlertsInRange(a.Value.tenant.Id, string.IsNullOrWhiteSpace(agent) ? null : agent, fUtc, tUtc,
+        string.IsNullOrWhiteSpace(type) ? null : type,
+        string.IsNullOrWhiteSpace(severity) ? null : severity,
+        take, Math.Max(0, offset ?? 0));
     var sc = DeptScope(a.Value.user, s);
     if (sc is not null) list = list.Where(x => sc.Value.ids.Contains(x.AgentId)).ToList();
     return Results.Ok(list);

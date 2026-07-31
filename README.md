@@ -103,7 +103,18 @@ Kimlik: enroll/okuma için `X-Tenant-Key`, telemetri için `X-Agent-Token`.
 | GET | `/api/v1/alerts` | Tenant'ın son uyarıları |
 | GET | `/api/v1/settings` | Tenant politikası (panel Ayarlar ekranı okur) |
 | PUT | `/api/v1/settings` | Tenant politikasını kaydet (agent bir sonraki turda uygular) |
+| GET | `/api/v1/report/events` | **Geriye dönük** dosya olayları — `agent`,`from`,`to`,`op`,`sensitive`,`limit`,`offset` |
+| GET | `/api/v1/report/alerts` | **Geriye dönük** uyarı geçmişi — `agent`,`from`,`to`,`type`,`severity`,`limit`,`offset` |
+| GET | `/api/v1/report/web` · `/report/app` · `/report/doc` | Tarih aralıklı süre raporları |
 | GET | `/health` | Servis durumu |
+
+> **Canlı uçlar vs. rapor uçları:** `/agents` `/alerts` `/events` `/web` `/appusage` yalnız **son N kaydı**
+> döner (canlı pano içindir). Geçmişe bakmak için **`/report/*`** uçları kullanılır — panelin
+> Uyarılar, Veri Güvenliği, Dosya Olayları ve Aktivite ekranları bunları kullanır.
+
+**Saat dilimi (`ARGUS_TZ`):** Uç nokta olayları agent'ın yerel saatiyle damgalanır, sunucu Ubuntu'da
+genelde UTC çalışır. Rapor gün sınırları `ARGUS_TZ` ile belirlenir (varsayılan `Europe/Istanbul`),
+böylece "Bugün" filtresi saat farkından kaymaz.
 
 Not: `enroll` ve `telemetry` yanıtları güncel `settings` nesnesini de içerir — agent politikayı böyle canlı alır.
 
@@ -161,6 +172,9 @@ kopya tespiti ad-tabanlı sezgiseldir. Üretimde **ETW + USN Journal** ~%99.9 do
 - [x] Dosya izleme: **USN Journal** kaynağı (kalıcı NTFS günlüğü, olay düşürmez) — motor `auto`/`usn`/`fsw` seçilir; USN admin+NTFS ister, olmazsa FileSystemWatcher'a düşer — *admin ile gerçek ortamda test edilecek*
 - [ ] Dosya izleme: **ETW (Kernel-File)** — gerçek zamanlı + süreç ilişkilendirme (sıfır-bağımlılık ETW ayrı iş; USN güvenilirlik çekirdeğini zaten verdi)
 - [x] USB / harici disk izleme (takılma/çıkarılma + medyaya kopyalama + `usb_exfil` uyarısı + panel "Veri Güvenliği" sekmesi) — *gerçek USB bellekle test edilecek*
+- [x] **USB engelleme gerçekten uygulanıyor** — Removable Storage Access politikası (takılı aygıtta da geçerli,
+      yeniden başlatma istemez) + USBSTOR/UASPStor + salt-okunur modu; panelde "hangi makinede uygulandı" doğrulaması
+- [x] **Geriye dönük filtreleme** — Uyarılar / Veri Güvenliği / Dosya Olayları kişi+tarih filtreli, sayfalı, CSV'li
 - [ ] Agent: Zamanlanmış Görev → **gerçek Windows Service + tamper koruması**
 - [ ] İmzalı MSI + GPO paketi
 - [x] Panel: **Ayarlar menüsü / politika editörü** — tenant başına uyarı eşikleri, dosya motoru, izlenen klasörler, USB aç/kapa, gönderim/boşta aralıkları; agent enroll/telemetri turunda canlı uygular

@@ -1,0 +1,32 @@
+name: Derleme Kontrolü
+
+# Her push'ta üç projeyi de derler. Amaç: Ubuntu sunucuda "git pull + dotnet publish"
+# yapılmadan ÖNCE derleme hatası burada görünsün (eskiden yalnız agent paketi derleniyordu,
+# backend hatası ancak canlıda ortaya çıkıyordu).
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest      # agent net8.0-windows hedefliyor → Windows runner şart
+    steps:
+      - name: Kodu al
+        uses: actions/checkout@v4
+
+      - name: .NET 8 kur
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Backend (sunucu + panel)
+        run: dotnet build backend/Argus.Server.csproj -c Release --nologo
+
+      - name: Agent (uç nokta)
+        run: dotnet build agent/Argus.Agent.csproj -c Release --nologo
+
+      - name: WebHost (tarayıcı köprüsü)
+        run: dotnet build webhost/Argus.WebHost.csproj -c Release --nologo

@@ -76,7 +76,10 @@ public sealed class TenantSettings
     // Agent davranışı
     public int SendSeconds { get; set; } = 15;           // telemetri gönderim aralığı
     public int IdleThresholdSeconds { get; set; } = 180;  // bu kadar giriş(+ses) yoksa "boşta" (okuma/izleme duraklamaları sayılmasın)
-    public bool UsbBlocked { get; set; } = false;         // USB depolama (flash/harici disk) engelle — SYSTEM servisi uygular
+    public bool UsbBlocked { get; set; } = false;         // (ESKİ alan — geriye uyum) UsbAccess=="block" ile eş anlamlı
+    // USB depolama erişimi: allow = serbest · readonly = takılır/okunur ama YAZILAMAZ (sızıntıyı durdurur,
+    // kullanıcıyı mağdur etmez) · block = hiç bağlanmaz. SYSTEM servisi registry politikasıyla uygular.
+    public string UsbAccess { get; set; } = "";           // "" → UsbBlocked'dan türetilir
     public string FileMonitor { get; set; } = "auto";    // auto | usn | fsw (dosya izleme motoru)
     public bool UsbMonitoring { get; set; } = true;      // USB/harici disk izleme açık mı
     public bool ContentScan { get; set; } = true;        // dosya içeriği hassas veri taraması (TC/IBAN/kart)
@@ -84,6 +87,17 @@ public sealed class TenantSettings
     public List<string> SensitiveKeywords { get; set; } = new(); // içerikte aranacak ek anahtar kelimeler
 
     public string UpdatedAt { get; set; } = "";
+
+    // İki alanı tek doğruya indirger: eski kayıtlarda/eski panelde yalnız UsbBlocked var,
+    // yeni panelde UsbAccess var. Hangisi doluysa diğerini ondan türet — agent hep tutarlı politika görür.
+    public TenantSettings NormalizeUsb()
+    {
+        var a = (UsbAccess ?? "").Trim().ToLowerInvariant();
+        if (a is not ("allow" or "readonly" or "block")) a = UsbBlocked ? "block" : "allow";
+        UsbAccess = a;
+        UsbBlocked = a == "block";
+        return this;
+    }
 }
 
 // --- Agent telemetrisi (agent'ın JSON çıktısıyla aynı alanlar) ---
@@ -93,7 +107,10 @@ public record SummaryDto(
     string Machine, string User, DateTime SessionStart, DateTime GeneratedAt,
     long TotalActiveSeconds, long TotalIdleSeconds,
     long FileCreates, long FileModifies, long FileDeletes, long FileRenames, long FileCopies, long AlertCount,
-    List<AppDto> Apps, List<WebDto>? Web);
+    List<AppDto> Apps, List<WebDto>? Web,
+    // Uç noktada GERÇEKTEN uygulanan USB politikası (allow/readonly/block). Boş/null = eski agent
+    // ya da servis henüz uygulamadı. "İstenen" ile karşılaştırılıp panelde doğrulama yapılır.
+    string? UsbPolicy = null);
 
 public record WebDto(string Domain, string? Url, string Title, long Seconds, bool Incognito);
 
@@ -123,7 +140,8 @@ public record WebReportRow(string Site, string? Domain, string? Url, string? Tit
 public record AgentView(
     string AgentId, string Machine, string User, DateTime LastSeen, bool Online,
     long ActiveSeconds, long IdleSeconds, long FileDeletes, long FileCopies, long AlertCount,
-    string Command, string Department);
+    string Command, string Department,
+    string? UsbPolicy = null);   // uç noktada uygulanan USB politikası (panel "uygulandı mı" gösterir)
 
 public record AgentCommandRequest(string Command);   // active | disabled | remove
 public record AgentDepartmentRequest(string Department);

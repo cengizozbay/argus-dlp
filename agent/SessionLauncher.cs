@@ -92,25 +92,93 @@ internal sealed class SessionLauncher
         catch { }
     }
 
-    // Panelden gelen USB depolama engelle/izin ver. USBSTOR/UASPStor sürücüsünün Start değerini ayarlar:
-    // 4 = engelli (yeni USB depolama takılınca yüklenmez), 3 = izinli. Mouse/klavye etkilenmez.
-    // Enforcement: her döngüde kontrol → biri elle geri açsa tekrar uygular. Sadece değiştiyse yazar.
+    // --- USB depolama politikası (panelden: allow | readonly | block) ---
+    //
+    // NEDEN TEK BAŞINA USBSTOR YETMEZ: USBSTOR\Start=4 yalnız sürücünün YÜKLENMESİNİ engeller.
+    // Zaten takılı olan bellek çalışmaya devam eder, sürücü o oturumda yüklüyse yeni takılan da
+    // çoğu zaman açılır — yani "engelle"yi işaretleyip belleği takınca hâlâ açılıyordu.
+    // ÇÖZÜM: asıl uygulayıcı "Removable Storage Access" politikası (RemovableStorageDevices).
+    // Bu politika birime HANDLE AÇILIRKEN denetlenir → takılı aygıt da anında erişilemez olur,
+    // yeniden başlatma gerekmez. USBSTOR/StorageDevicePolicies destekleyici katman olarak kalır.
+    //
+    // Sınıf GUID'leri (Grup İlkesi ile aynı):
+    private const string RsdPolicy = @"SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices";
+    private const string ClsRemovableDisk = "{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}";   // USB bellek / harici disk
+    private const string ClsCdRom = "{53f56308-b6bf-11d0-94f2-00a0c91efb8b}";           // CD/DVD (yazma = sızıntı)
+    private const string ClsWpd1 = "{6AC27878-A6FA-4155-BA85-F98F491D4F33}";            // WPD — telefon/MTP
+    private const string ClsWpd2 = "{F33FDC04-D1AC-4E8E-9A30-19BBD4B108AE}";            // WPD — diğer taşınabilir
+    private const string ClsFloppy = "{53f56311-b6bf-11d0-94f2-00a0c91efb8b}";
+    private const string ClsTape = "{53f5630b-b6bf-11d0-94f2-00a0c91efb8b}";
+
+    // Uygulanan son durum (tekrar tekrar yazmamak için). Enforcement: her döngüde kontrol edilir,
+    // biri elle geri açarsa yeniden uygulanır.
+    private static string _usbApplied = "";
+
     private static void ApplyUsbState()
     {
         try
         {
             if (!File.Exists(UsbFlag)) return;
-            var want = File.ReadAllText(UsbFlag).Trim();
-            int desired = want.Equals("block", StringComparison.OrdinalIgnoreCase) ? 4 : 3;
+            var want = File.ReadAllText(UsbFlag).Trim().ToLowerInvariant();
+            if (want is not ("block" or "readonly" or "allow"))
+                want = want == "block" ? "block" : "allow";   // eski sürüm "block"/"allow" yazıyordu
+
+            bool block = want == "block";
+            bool noWrite = want is "block" or "readonly";
+
+            // 1) ASIL KATMAN — Removable Storage Access. Takılı aygıtta da geçerli, reboot istemez.
+            using (var root = Registry.LocalMachine.CreateSubKey(RsdPolicy, writable: true))
+            {
+                if (root is not null)
+                {
+                    // "Tüm çıkarılabilir depolama sınıfları: tüm erişimi reddet"
+                    SetDword(root, "Deny_All", block ? 1 : 0);
+
+                    SetClass(root, ClsRemovableDisk, denyRead: block, denyWrite: noWrite);
+                    SetClass(root, ClsWpd1, denyRead: block, denyWrite: noWrite);
+                    SetClass(root, ClsWpd2, denyRead: block, denyWrite: noWrite);
+                    SetClass(root, ClsFloppy, denyRead: block, denyWrite: noWrite);
+                    SetClass(root, ClsTape, denyRead: block, denyWrite: noWrite);
+                    // CD/DVD: okumayı hiç kesmiyoruz (kurulum medyası), yalnız YAZMAYI kapatıyoruz.
+                    SetClass(root, ClsCdRom, denyRead: false, denyWrite: noWrite);
+                }
+            }
+
+            // 2) Destek katmanı — salt-okunur için klasik genel yazma koruması.
+            using (var sdp = Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Control\StorageDevicePolicies", writable: true))
+                if (sdp is not null) SetDword(sdp, "WriteProtect", noWrite && !block ? 1 : 0);
+
+            // 3) Destek katmanı — sürücü hiç yüklenmesin (yalnız tam engelde; yeni takılanlar için).
             foreach (var svc in new[] { "USBSTOR", "UASPStor" })
             {
                 using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{svc}", writable: true);
                 if (key is null) continue;   // UASPStor her sistemde olmayabilir
-                var cur = key.GetValue("Start") as int? ?? 3;
-                if (cur != desired) key.SetValue("Start", desired, RegistryValueKind.DWord);
+                var desired = block ? 4 : 3;
+                if ((key.GetValue("Start") as int? ?? 3) != desired) key.SetValue("Start", desired, RegistryValueKind.DWord);
+            }
+
+            // Uygulanan gerçek durumu bırak: kullanıcı-ajanı okuyup sunucuya bildirir → panelde
+            // "politika şu makinede uygulandı mı" görülür (yoksa engelin tuttuğunu doğrulamak imkânsızdı).
+            if (_usbApplied != want)
+            {
+                _usbApplied = want;
+                try { File.WriteAllText(Path.Combine(SignalDir, "usb-applied"), want); } catch { }
             }
         }
         catch { /* registry erişilemedi */ }
+    }
+
+    private static void SetDword(RegistryKey k, string name, int value)
+    {
+        if ((k.GetValue(name) as int?) != value) k.SetValue(name, value, RegistryValueKind.DWord);
+    }
+
+    private static void SetClass(RegistryKey root, string classGuid, bool denyRead, bool denyWrite)
+    {
+        using var k = root.CreateSubKey(classGuid, writable: true);
+        if (k is null) return;
+        SetDword(k, "Deny_Read", denyRead ? 1 : 0);
+        SetDword(k, "Deny_Write", denyWrite ? 1 : 0);
     }
 
     private static bool LaunchInSession(uint sessionId, string exePath, out Process? child)

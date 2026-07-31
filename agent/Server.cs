@@ -71,7 +71,15 @@ public sealed class AgentSettings
     public int IdleThresholdSeconds { get; set; } = 180;
     public string FileMonitor { get; set; } = "auto";
     public bool UsbMonitoring { get; set; } = true;
-    public bool UsbBlocked { get; set; } = false;   // USB depolama engelle (SYSTEM servisi registry ile uygular)
+    public bool UsbBlocked { get; set; } = false;   // (eski alan — geriye uyum) UsbAccess=="block" ile eş anlamlı
+    public string UsbAccess { get; set; } = "";     // allow | readonly | block  ("" → UsbBlocked'dan türet)
+
+    // Sunucu eski sürümse UsbAccess boş gelir → eski alandan türet.
+    public string EffectiveUsbAccess()
+    {
+        var a = (UsbAccess ?? "").Trim().ToLowerInvariant();
+        return a is "allow" or "readonly" or "block" ? a : (UsbBlocked ? "block" : "allow");
+    }
     public bool ContentScan { get; set; } = true;
     public List<string>? WatchFolders { get; set; }
     public List<string>? SensitiveKeywords { get; set; }

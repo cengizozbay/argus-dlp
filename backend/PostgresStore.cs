@@ -57,6 +57,8 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS sensitivity text;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS src text;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS user_name text;
 CREATE INDEX IF NOT EXISTS ix_events_tenant ON events(tenant_id, id DESC);
+-- Geriye dönük (tarih aralıklı) olay sorgusu 300 makinede tam tarama yapmasın.
+CREATE INDEX IF NOT EXISTS ix_events_ts ON events(tenant_id, ts);
 CREATE TABLE IF NOT EXISTS web_usage (
   id bigserial PRIMARY KEY, tenant_id text, agent_id text, machine text, user_name text,
   site text, domain text, url text, seconds bigint, incognito boolean, ts text);
@@ -396,7 +398,8 @@ CREATE TABLE IF NOT EXISTS settings (
                 r.GetString(0), r.GetString(1), r.IsDBNull(2) ? "" : r.GetString(2),
                 last, now - last < OnlineWindow,
                 s?.TotalActiveSeconds ?? 0, s?.TotalIdleSeconds ?? 0, s?.FileDeletes ?? 0, s?.FileCopies ?? 0, s?.AlertCount ?? 0,
-                r.IsDBNull(5) ? "active" : r.GetString(5), r.IsDBNull(6) ? "" : r.GetString(6)));
+                r.IsDBNull(5) ? "active" : r.GetString(5), r.IsDBNull(6) ? "" : r.GetString(6),
+                s?.UsbPolicy));
         }
         return list.OrderByDescending(v => v.Online).ThenBy(v => v.Machine).ToList();
     }
@@ -595,18 +598,30 @@ CREATE TABLE IF NOT EXISTS settings (
         return list;
     }
 
-    public IReadOnlyList<TenantEvent> EventsInRange(string tenantId, string? agentId, string fromUtcIso, string toUtcIso, int limit)
+    public IReadOnlyList<TenantEvent> EventsInRange(string tenantId, string? agentId, string fromUtcIso, string toUtcIso,
+        int limit, string? op = null, bool sensitiveOnly = false, int offset = 0)
     {
         var list = new List<TenantEvent>();
         using var conn = _ds.OpenConnection();
+        // op="usb" → usb_insert/usb_remove/usb_copy hepsi; başka değer → tam eşleşme.
+        var opSql = op switch
+        {
+            null or "" => "",
+            "usb" => " AND op LIKE 'usb%'",
+            _ => " AND op=@op"
+        };
         using var cmd = new NpgsqlCommand(
             "SELECT agent_id,machine,ts,op,path,sensitivity,src,user_name FROM events " +
-            "WHERE tenant_id=@t AND (@a::text IS NULL OR agent_id=@a) AND ts>=@f AND ts<=@to ORDER BY id DESC LIMIT @l", conn);
+            "WHERE tenant_id=@t AND (@a::text IS NULL OR agent_id=@a) AND ts>=@f AND ts<=@to" + opSql +
+            (sensitiveOnly ? " AND sensitivity IS NOT NULL AND sensitivity<>''" : "") +
+            " ORDER BY id DESC LIMIT @l OFFSET @o", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("f", fromUtcIso);
         cmd.Parameters.AddWithValue("to", toUtcIso);
         cmd.Parameters.AddWithValue("l", limit);
+        cmd.Parameters.AddWithValue("o", Math.Max(0, offset));
+        if (opSql.Contains("@op")) cmd.Parameters.AddWithValue("op", op!);
         using var r = cmd.ExecuteReader();
         while (r.Read())
             list.Add(new TenantEvent(
@@ -617,17 +632,48 @@ CREATE TABLE IF NOT EXISTS settings (
         return list;
     }
 
+    // Uyarı geçmişi: received_at (timestamptz) aralığı + isteğe bağlı kişi/tip/önem + sayfalama.
+    // Tip/önem uyarının jsonb gövdesinde → data->>'Type' / data->>'Severity'.
+    public IReadOnlyList<TenantAlert> AlertsInRange(string tenantId, string? agentId, DateTime fromUtc, DateTime toUtc,
+        string? type, string? severity, int limit, int offset)
+    {
+        var list = new List<TenantAlert>();
+        using var conn = _ds.OpenConnection();
+        using var cmd = new NpgsqlCommand(
+            "SELECT agent_id,machine,received_at,data FROM alerts " +
+            "WHERE tenant_id=@t AND (@a::text IS NULL OR agent_id=@a) AND received_at>=@f AND received_at<=@to" +
+            (string.IsNullOrWhiteSpace(type) ? "" : " AND data->>'Type'=@ty") +
+            (string.IsNullOrWhiteSpace(severity) ? "" : " AND data->>'Severity'=@sv") +
+            " ORDER BY received_at DESC, id DESC LIMIT @l OFFSET @o", conn);
+        cmd.Parameters.AddWithValue("t", tenantId);
+        cmd.Parameters.AddWithValue("a", (object?)agentId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("f", fromUtc);
+        cmd.Parameters.AddWithValue("to", toUtc);
+        cmd.Parameters.AddWithValue("l", limit);
+        cmd.Parameters.AddWithValue("o", Math.Max(0, offset));
+        if (!string.IsNullOrWhiteSpace(type)) cmd.Parameters.AddWithValue("ty", type);
+        if (!string.IsNullOrWhiteSpace(severity)) cmd.Parameters.AddWithValue("sv", severity);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new TenantAlert(
+                r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1),
+                r.GetDateTime(2), JsonSerializer.Deserialize<AlertDto>(r.GetString(3))!));
+        return list;
+    }
+
     public TenantSettings GetSettings(string tenantId)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand("SELECT data FROM settings WHERE tenant_id=@t", conn);
         cmd.Parameters.AddWithValue("t", tenantId);
         var data = cmd.ExecuteScalar() as string;
-        return data is null ? new TenantSettings() : JsonSerializer.Deserialize<TenantSettings>(data) ?? new TenantSettings();
+        return (data is null ? new TenantSettings() : JsonSerializer.Deserialize<TenantSettings>(data) ?? new TenantSettings())
+            .NormalizeUsb();
     }
 
     public void SaveSettings(string tenantId, TenantSettings settings)
     {
+        settings.NormalizeUsb();
         settings.UpdatedAt = DateTime.UtcNow.ToString("o");
         using var conn = _ds.OpenConnection();
         using var cmd = new NpgsqlCommand(

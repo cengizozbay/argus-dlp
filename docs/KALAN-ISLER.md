@@ -22,6 +22,41 @@ Son güncelleme: 2026-07-18
 
 ---
 
+## 🔎 DLP KAPSAM İNCELEMESİ (2026-07-31) — nereden sızabilir, neyi görüyoruz?
+
+Sahada (Arhan) çalışan sürüm incelendi. **Kapalı kanallar** ve **açık kalan kanallar**:
+
+| Sızıntı kanalı | Durum | Not |
+|---|---|---|
+| USB bellek / harici disk | ✅ görülüyor + ✅ **engellenebiliyor** | takılma/çıkarma, medyaya kopyalama, `usb_exfil`; politika: serbest/salt-okunur/engelli |
+| Telefon (MTP/WPD) | ⚠️ **engelleniyor, görülmüyor** | USB politikası WPD sınıfını da kapatır; ama MTP kopyalama **olayı** yakalanmıyor (birim harfi yok → FSW takılamaz) |
+| Ağ paylaşımı (`\\filesrv`) | ✅ görülüyor | fileserver denetim agent'ı, gerçek kullanıcı adıyla |
+| Yerel dosya sil/kopyala/değiştir | ✅ görülüyor | USN Journal / FSW |
+| Web · gizli mod | ✅ görülüyor | uzantı + UIA; **hangi dosyanın yüklendiği** görünmüyor |
+| Hassas içerik (TC/IBAN/kart) | ✅ görülüyor | doğrulamalı, düşük yanlış-pozitif |
+| CD/DVD yazma | ✅ engelleniyor | politika `Deny_Write` |
+| **Yazdırma (kâğıda)** | ❌ **yok** | klasik DLP kalemi — hangi belge, kaç sayfa, hangi yazıcı |
+| **E-posta eki / webmail yükleme** | ❌ **yok** | "hangi dosya gitti" ilişkilendirmesi yok |
+| **Bulut yükleme (Drive/WeTransfer/Dropbox)** | ❌ **yok** | site süresi görünür, yüklenen dosya görünmez |
+| **Pano (kopyala-yapıştır) / ekran görüntüsü** | ❌ yok | |
+| **Bluetooth / AirDrop** | ❌ yok | |
+
+### İçerik taramasında (ContentClassifier) kör noktalar
+- **PDF taranmıyor** → fatura, sözleşme, kimlik taraması gibi en hassas belgeler "temiz" görünür. *(en öncelikli açık)*
+- **Eski Office (.doc/.xls/.ppt)** taranmıyor — kurumsalda hâlâ yaygın.
+- **Arşiv içi (.zip/.rar/.7z)** taranmıyor → **hassas dosyaları zip'leyip USB'ye atmak taramayı tamamen atlatır.**
+- **8 MB üstü dosya** taranmıyor → büyük müşteri/personel Excel'i kaçar.
+- **Parola korumalı dosya** ayrıca işaretlenmiyor (tek başına şüphe sinyalidir).
+
+### Diğer teknik borçlar
+- **Kopya tespiti ad-tabanlı sezgisel** → yeniden adlandırılan kopya kaçar; içerik hash'i (SHA-256) ile eşleştirilmeli.
+- **Süreç ilişkilendirme yok** (ETW) → "hangi uygulama kopyaladı" bilinmiyor.
+- **Veri saklama politikası yok** → `events` tablosu sınırsız büyür. 300 makinede aylık milyonlarca satır;
+  arşivleme/partition + saklama süresi (ör. 12 ay) gerekli. *(tarih indeksleri 2026-07-31'de eklendi, ilk adım tamam)*
+- **Otomatik test yok.**
+
+---
+
 ## 🔴 KALAN — sırayla
 
 ### 1. PostgreSQL'e geçiş (üretim ölçeği)

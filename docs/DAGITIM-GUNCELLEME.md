@@ -100,7 +100,23 @@ Firmalar/kullanıcılar/lisans durur. Agent'lar ~15-30 sn'de temiz olarak geri g
 | **USB'ye kopya**, yerel dosya | Kişinin makinesindeki client agent |
 | **Web / URL** (gizli mod dahil) | Client agent + tarayıcı eklentisi |
 | **Belge süresi + konum** (hangi dosya, ne kadar, nerede) | Client agent (Belge sekmesi → satıra tıkla → konum/tam yol) |
-| **USB engelleme** | Ayarlar → USB engelle (firma geneli) |
+| **USB engelleme** | Ayarlar → USB depolama: Serbest / Salt-okunur / Engelli (firma geneli, ~15 sn'de iner) |
+| **Geriye dönük her şey** | Uyarılar · Veri Güvenliği · Dosya Olayları · Aktivite → kişi + tarih filtresi (üstteki çubuk) |
+
+---
+
+## 7b. USB engelleme — nasıl doğrulanır
+1. **Ayarlar → USB depolama** → `Salt-okunur` (önerilen) ya da `Engelli` → Kaydet.
+2. ~15-30 sn bekle (agent telemetri turu).
+3. **Veri Güvenliği** ekranı → *USB Politikası — Uygulama Durumu* paneli: kaç makinede uygulandı görünür.
+   Çevrimdışı makineler açılınca uygular. **"Bilinmiyor"** yazan makinede agent eskidir → Adım 2 ile güncelle.
+4. Makinede test: USB bellek tak.
+   - `Salt-okunur` → açılır, okunur; dosya kopyalamaya çalışınca "yazma korumalı" hatası.
+   - `Engelli` → Explorer'da erişilemez.
+
+> Eski sürümde yalnız `USBSTOR\Start=4` yazılıyordu; bu sadece sürücünün YÜKLENMESİNİ engeller —
+> zaten takılı bellek ve çoğu durumda yeni takılan da çalışmaya devam ediyordu. Artık asıl uygulayıcı
+> **Removable Storage Access** politikası: birime erişim anında denetlenir, yeniden başlatma gerekmez.
 
 ---
 

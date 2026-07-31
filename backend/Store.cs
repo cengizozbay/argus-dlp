@@ -37,7 +37,14 @@ public interface IStore
 
     void AddDocUsage(string tenantId, string agentId, string machine, string user, IEnumerable<DocUsageDto> usage);
     IReadOnlyList<DocReportRow> DocReport(string tenantId, string? agentId, string fromUtcIso, string toUtcIso, string? department = null);
-    IReadOnlyList<TenantEvent> EventsInRange(string tenantId, string? agentId, string fromUtcIso, string toUtcIso, int limit);
+    // Geriye dönük olay sorgusu. op = tek işlem ya da "usb" (usb_* hepsi); sensitiveOnly = yalnız hassas içerik.
+    // offset ile sayfalanır → panel "daha fazla yükle" ile 500'lük tavana takılmadan geçmişe iner.
+    IReadOnlyList<TenantEvent> EventsInRange(string tenantId, string? agentId, string fromUtcIso, string toUtcIso,
+        int limit, string? op = null, bool sensitiveOnly = false, int offset = 0);
+
+    // Geriye dönük uyarı sorgusu (Uyarılar + Veri Güvenliği ekranları). type/severity boşsa filtrelenmez.
+    IReadOnlyList<TenantAlert> AlertsInRange(string tenantId, string? agentId, DateTime fromUtc, DateTime toUtc,
+        string? type, string? severity, int limit, int offset);
 
     TenantSettings GetSettings(string tenantId);
     void SaveSettings(string tenantId, TenantSettings settings);

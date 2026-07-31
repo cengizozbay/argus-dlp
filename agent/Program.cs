@@ -202,21 +202,39 @@ internal static class Program
         _classifier.Configure(s.ContentScan, s.SensitiveKeywords);
         if (s.SendSeconds >= 5) _cfg.SendSeconds = s.SendSeconds;
         if (s.IdleThresholdSeconds >= 5) _idleThreshold = s.IdleThresholdSeconds;
-        WriteUsbSignal(s.UsbBlocked);   // USB engelle/izin ver → SYSTEM servisi registry'yi uygular
+        WriteUsbSignal(s.EffectiveUsbAccess());   // USB politikası → SYSTEM servisi registry'yi uygular
         _appliedSettingsStamp = s.UpdatedAt;
     }
 
+    private static readonly string SignalDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal");
+
     // Kullanıcı-ajanı yetkisiz (HKLM yazamaz). İstenen USB durumunu signal\usb'ye bırakır;
-    // SYSTEM servisi (SessionLauncher) okuyup USBSTOR registry'sini uygular.
-    private static void WriteUsbSignal(bool blocked)
+    // SYSTEM servisi (SessionLauncher) okuyup registry politikasını uygular.
+    private static void WriteUsbSignal(string access)
     {
         try
         {
-            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Argus", "signal");
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(Path.Combine(dir, "usb"), blocked ? "block" : "allow");
+            Directory.CreateDirectory(SignalDir);
+            File.WriteAllText(Path.Combine(SignalDir, "usb"), access);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // Sessizce yutulursa "engelle dedim ama olmadı" sebebi hiç görünmüyordu.
+            Console.WriteLine($"  USB politikası yazılamadı ({SignalDir}): {ex.Message}");
+        }
+    }
+
+    // SYSTEM servisinin GERÇEKTEN uyguladığı politika (o yazar, biz okuruz). Panelde
+    // "istenen" ile "uygulanan" karşılaştırılabilsin diye telemetriyle gönderilir.
+    private static string ReadUsbApplied()
+    {
+        try
+        {
+            var f = Path.Combine(SignalDir, "usb-applied");
+            return File.Exists(f) ? File.ReadAllText(f).Trim() : "";
+        }
+        catch { return ""; }
     }
 
     // Panelde ayar değişince (yeni UpdatedAt) canlı uygula. Eşikler/aralık/idle ve USB aç-kapa
@@ -601,7 +619,8 @@ internal static class Program
             _activeSeconds, _idleSeconds,
             Interlocked.Read(ref _fileCreates), Interlocked.Read(ref _fileModifies),
             Interlocked.Read(ref _fileDeletes), Interlocked.Read(ref _fileRenames),
-            Interlocked.Read(ref _fileCopies), Interlocked.Read(ref _alertCount), apps, web);
+            Interlocked.Read(ref _fileCopies), Interlocked.Read(ref _alertCount), apps, web,
+            ReadUsbApplied());
     }
 
     private static void Flush()
@@ -634,6 +653,8 @@ internal static class Program
         Console.WriteLine($"  Durum  : {(_wasIdle ? "BOŞTA" : "AKTİF")}");
         Console.WriteLine($"  Dosya  : +{_fileCreates} ~{_fileModifies} -{_fileDeletes} ⇄{_fileRenames} ⧉{_fileCopies}   |   Uyarı: {_alertCount}");
         Console.WriteLine($"  USB    : {_usbInserts} takılma · {_usbCopies} dosya USB'ye kopyalandı   |   {_usbSource?.Describe()}");
+        var usbPol = ReadUsbApplied();
+        Console.WriteLine($"  USB pol: istenen {(_server?.LatestSettings?.EffectiveUsbAccess() ?? "-")} · uygulanan {(usbPol.Length > 0 ? usbPol : "(servis henüz yazmadı)")}");
         Console.WriteLine($"  Hassas : {_sensitiveFiles} dosyada hassas veri (TC/IBAN/kart/anahtar kelime)   |   İçerik taraması: {(_classifier.Enabled ? "açık" : "kapalı")}");
         var topWeb = WebStats.Values.OrderByDescending(w => w.Seconds).FirstOrDefault();
         if (topWeb is not null)
@@ -774,7 +795,9 @@ internal sealed record SessionSummary(
     DateTime GeneratedAt, string Machine, string User, DateTime SessionStart,
     long TotalActiveSeconds, long TotalIdleSeconds,
     long FileCreates, long FileModifies, long FileDeletes, long FileRenames, long FileCopies, long AlertCount,
-    List<AppSummary> Apps, List<WebSummary> Web);
+    List<AppSummary> Apps, List<WebSummary> Web,
+    // Bu makinede GERÇEKTEN uygulanan USB politikası (allow/readonly/block; "" = servis henüz uygulamadı).
+    string? UsbPolicy = null);
 
 internal sealed record WebSummary(string Domain, string? Url, string Title, long Seconds, bool Incognito);
 
