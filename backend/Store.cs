@@ -49,6 +49,12 @@ public interface IStore
     TenantSettings GetSettings(string tenantId);
     void SaveSettings(string tenantId, TenantSettings settings);
 
+    // Veri saklama: kesim tarihinden ESKİ telemetriyi siler, silinen satır sayısını döner.
+    // events/web_usage/app_usage/doc_usage damgaları METİN (saha yerel saati) → cutoffLocalIso;
+    // alerts.received_at gerçek zaman damgası (UTC) → cutoffUtc.
+    // Firma/kullanıcı/lisans/ayar kayıtlarına DOKUNMAZ.
+    long PurgeOlderThan(string tenantId, DateTime cutoffUtc, string cutoffLocalIso);
+
     // --- Panel kullanıcıları + oturumlar (RBAC) ---
     int CountUsers(string tenantId);
     PanelUser? GetUser(string tenantId, string username);

@@ -1017,6 +1017,7 @@
     v.innerHTML=ayarHead()+'<div class="empty">Yükleniyor…</div>';
     api("/settings").then(function(s){
       var monSel=function(val){ return ["auto","usn","fsw"].map(function(m){ var lbl={auto:"Otomatik (USN varsa, yoksa FSW)",usn:"USN Journal (güvenilir, admin ister)",fsw:"FileSystemWatcher (yedek)"}[m]; return '<option value="'+m+'"'+(val===m?" selected":"")+'>'+lbl+'</option>'; }).join(""); };
+      var sevSel=function(val){ return ["critical","warning","info"].map(function(m){ var lbl={critical:"Yalnız Kritik (önerilen)",warning:"Uyarı ve üstü",info:"Hepsi (bilgi dahil)"}[m]; return '<option value="'+m+'"'+(val===m?" selected":"")+'>'+lbl+'</option>'; }).join(""); };
       var usbAccessSel=function(val){ return ["allow","readonly","block"].map(function(m){ var lbl={allow:"Serbest — okuma ve yazma açık",readonly:"Salt-okunur — yazma KAPALI (önerilen)",block:"Engelli — hiç bağlanmaz"}[m]; return '<option value="'+m+'"'+(val===m?" selected":"")+'>'+lbl+'</option>'; }).join(""); };
       var folders=(s.watchFolders&&s.watchFolders.length)? s.watchFolders.join("\n") : "";
       var html=ayarHead()+
@@ -1043,6 +1044,15 @@
         '<div class="panel"><div class="ph"><b>USB Depolama Engelleme (Uygulama)</b><span class="bd">flash bellek / harici disk / telefon — çalışan veri kopyalayamaz</span></div><div class="fgrid">'+
           '<div class="frow"><label>USB depolama<span class="fh">Salt-okunur = takılır, okunur ama YAZILAMAZ (sızıntıyı durdurur, kullanıcıyı mağdur etmez) · Engelli = hiç açılmaz · mouse/klavye/webcam etkilenmez · ~15 sn içinde tüm makinelere iner</span></label><select id="set-usbaccess">'+usbAccessSel(s.usbAccess||(s.usbBlocked?"block":"allow"))+'</select></div>'+
           '<div class="frow"><label>Uygulama durumu<span class="fh">politikanın makinelerde tuttuğunu Veri Güvenliği ekranından doğrulayın</span></label><button class="btn" data-go="guvenlik">Veri Güvenliği →</button></div>'+
+        '</div></div>'+
+        '<div class="panel"><div class="ph"><b>Uyarı Bildirimi</b><span class="bd">kritik olayda paneli beklemeden haber ver · SMTP sunucu tarafında yapılandırılır</span></div><div class="fgrid">'+
+          '<div class="frow wide"><label>E-posta alıcıları<span class="fh">virgülle ayır · boş bırakılırsa e-posta gönderilmez</span></label><input type="text" id="set-mailto" value="'+esc(s.notifyEmailTo||"")+'" placeholder="bt@firma.com, guvenlik@firma.com"></div>'+
+          '<div class="frow wide"><label>Webhook adresi<span class="fh">Slack / Teams / kendi ucunuz · JSON POST edilir</span></label><input type="text" id="set-hook" value="'+esc(s.notifyWebhookUrl||"")+'" placeholder="https://hooks.slack.com/services/..."></div>'+
+          '<div class="frow"><label>En düşük önem<span class="fh">bu seviyeden itibaren bildirilir</span></label><select id="set-minsev">'+sevSel(s.notifyMinSeverity||"critical")+'</select></div>'+
+          '<div class="frow"><label>Bildirim aralığı<span class="fh">60 sn\'de bir toplu gönderilir · aynı tipte 10 dk bekleme (uyarı yağmuru olmaz)</span></label><span class="u">otomatik</span></div>'+
+        '</div></div>'+
+        '<div class="panel"><div class="ph"><b>Veri Saklama</b><span class="bd">eski telemetriyi otomatik sil · firma/kullanıcı/lisans kayıtları etkilenmez</span></div><div class="fgrid">'+
+          nrow("ret","Saklama süresi (gün)",s.retentionDays==null?0:s.retentionDays,"0 = sınırsız · günde bir temizlenir · KVKK saklama süresiyle uyumlu seçin")+
         '</div></div>'+
         '<div class="panel"><div class="ph"><b>Agent Davranışı</b></div><div class="fgrid">'+
           nrow("send","Gönderim aralığı (sn)",s.sendSeconds,"telemetri sıklığı · min 5")+
@@ -1073,7 +1083,11 @@
       scanArchives:document.getElementById("set-arch").checked,
       flagEncrypted:document.getElementById("set-enc").checked,
       watchFolders:folders,
-      sensitiveKeywords:keywords
+      sensitiveKeywords:keywords,
+      notifyEmailTo:(document.getElementById("set-mailto").value||"").trim(),
+      notifyWebhookUrl:(document.getElementById("set-hook").value||"").trim(),
+      notifyMinSeverity:document.getElementById("set-minsev").value,
+      retentionDays:Math.max(0,numOf("ret",0))
     };
     btn.disabled=true; msg.textContent="Kaydediliyor…";
     apiSend("/settings","PUT",body).then(function(s){

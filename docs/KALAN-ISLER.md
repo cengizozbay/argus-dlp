@@ -41,19 +41,34 @@ Sahada (Arhan) çalışan sürüm incelendi. **Kapalı kanallar** ve **açık ka
 | **Pano (kopyala-yapıştır) / ekran görüntüsü** | ❌ yok | |
 | **Bluetooth / AirDrop** | ❌ yok | |
 
-### İçerik taramasında (ContentClassifier) kör noktalar
-- **PDF taranmıyor** → fatura, sözleşme, kimlik taraması gibi en hassas belgeler "temiz" görünür. *(en öncelikli açık)*
-- **Eski Office (.doc/.xls/.ppt)** taranmıyor — kurumsalda hâlâ yaygın.
-- **Arşiv içi (.zip/.rar/.7z)** taranmıyor → **hassas dosyaları zip'leyip USB'ye atmak taramayı tamamen atlatır.**
-- **8 MB üstü dosya** taranmıyor → büyük müşteri/personel Excel'i kaçar.
-- **Parola korumalı dosya** ayrıca işaretlenmiyor (tek başına şüphe sinyalidir).
+### İçerik taraması — ✅ KAPATILDI (2026-07-31)
+- ✅ **PDF** taranıyor (`TextExtract.Pdf`: FlateDecode + Tj/TJ metin işleçleri). Gerçek 975 KB PDF: 323 ms.
+- ✅ **Eski Office (.doc/.xls/.ppt/.msg)** — ASCII + UTF-16LE dizi çıkarımıyla taranıyor.
+- ✅ **ZIP arşivi içi** özyinelemeli taranıyor → "zip'le ve USB'ye at" yolu kapandı.
+- ✅ **Boyut tavanı** politikadan geliyor (varsayılan 32 MB, 512 MB'a kadar).
+- ✅ **Parola korumalı / açılamayan** dosya (rar, 7z, şifreli zip) sızıntı sinyali sayılıyor.
+- ⚠️ **Taranmış (görüntü) PDF** hâlâ kapsam dışı → OCR gerekir. Sıfır-bağımlılık kuralıyla çelişir;
+  gerekirse ayrı bir OCR servisi olarak düşünülmeli.
+- ⚠️ **RAR/7z içeriği** açılmıyor (tescilli format) — yalnız işaretleniyor.
 
-### Diğer teknik borçlar
+**Bu sırada yakalanan iki gerçek hata:** (1) Türkçe I/İ/ı/i katlaması yapılmadığı için politikaya
+"gizli" yazınca belgedeki "GİZLİ" kaçıyordu. (2) Kredi kartı tespiti yalnız Luhn'a bakıyordu →
+rastgele 16 hanelinin ~%10'u geçiyor; roman/taslak PDF'lerinde bile "Kredi Kartı" bulgusu çıkıyordu.
+Artık kart ailesi ön eki (Visa/MasterCard/Amex/Troy/UnionPay/Discover/JCB/Diners) de şart.
+
+### Kurumsal işletim — ✅ KAPATILDI (2026-07-31)
+- ✅ **Uyarı bildirimi**: e-posta (SMTP) + webhook (Slack/Teams) + **SIEM'e CEF/syslog** akışı.
+  Toplu gönderim + tip başına bekleme ile uyarı yağmuru engelleniyor.
+- ✅ **Veri saklama**: firma başına gün sayısı, günde bir otomatik temizlik; yalnız telemetri silinir.
+
+### Diğer teknik borçlar (açık)
 - **Kopya tespiti ad-tabanlı sezgisel** → yeniden adlandırılan kopya kaçar; içerik hash'i (SHA-256) ile eşleştirilmeli.
 - **Süreç ilişkilendirme yok** (ETW) → "hangi uygulama kopyaladı" bilinmiyor.
-- **Veri saklama politikası yok** → `events` tablosu sınırsız büyür. 300 makinede aylık milyonlarca satır;
-  arşivleme/partition + saklama süresi (ör. 12 ay) gerekli. *(tarih indeksleri 2026-07-31'de eklendi, ilk adım tamam)*
-- **Otomatik test yok.**
+- **Zamanlanmış raporlar** (haftalık PDF/CSV e-postası) yok.
+- **AD/LDAP ile giriş** yok — panel kullanıcıları elle açılıyor.
+- ✅ **Otomatik test** altyapısı kuruldu (xUnit, 45 test): içerik sınıflandırıcı + depolama + geriye dönük sorgular.
+  ⚠️ Geliştirme makinesinde Windows **Smart App Control** imzasız `Argus.Server.dll`'i yüklemiyor →
+  backend testleri yalnız CI'da koşuyor.
 
 ---
 

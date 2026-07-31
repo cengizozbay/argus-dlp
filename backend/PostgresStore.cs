@@ -671,6 +671,26 @@ CREATE TABLE IF NOT EXISTS settings (
             .NormalizeUsb();
     }
 
+    public long PurgeOlderThan(string tenantId, DateTime cutoffUtc, string cutoffLocalIso)
+    {
+        long n = 0;
+        using var conn = _ds.OpenConnection();
+        using (var c = new NpgsqlCommand("DELETE FROM alerts WHERE tenant_id=@t AND received_at<@c", conn))
+        {
+            c.Parameters.AddWithValue("t", tenantId);
+            c.Parameters.AddWithValue("c", cutoffUtc);
+            n += c.ExecuteNonQuery();
+        }
+        foreach (var table in new[] { "events", "web_usage", "app_usage", "doc_usage" })
+        {
+            using var c = new NpgsqlCommand($"DELETE FROM {table} WHERE tenant_id=@t AND ts<@c", conn);
+            c.Parameters.AddWithValue("t", tenantId);
+            c.Parameters.AddWithValue("c", cutoffLocalIso);
+            n += c.ExecuteNonQuery();
+        }
+        return n;
+    }
+
     public void SaveSettings(string tenantId, TenantSettings settings)
     {
         settings.NormalizeUsb();

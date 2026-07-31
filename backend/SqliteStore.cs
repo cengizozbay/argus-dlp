@@ -661,6 +661,26 @@ CREATE INDEX IF NOT EXISTS ix_sessions_exp ON sessions(expires_at);");
         }
     }
 
+    public long PurgeOlderThan(string tenantId, DateTime cutoffUtc, string cutoffLocalIso)
+    {
+        lock (_gate)
+        {
+            long n = 0;
+            n += ExecCount("DELETE FROM alerts WHERE tenant_id=@t AND received_at<@c", ("@t", tenantId), ("@c", Iso(cutoffUtc)));
+            foreach (var table in new[] { "events", "web_usage", "app_usage", "doc_usage" })
+                n += ExecCount($"DELETE FROM {table} WHERE tenant_id=@t AND ts<@c", ("@t", tenantId), ("@c", cutoffLocalIso));
+            return n;
+        }
+    }
+
+    private int ExecCount(string sql, params (string, object)[] ps)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = sql;
+        foreach (var (k, v) in ps) cmd.Parameters.AddWithValue(k, v);
+        return cmd.ExecuteNonQuery();
+    }
+
     public void SaveSettings(string tenantId, TenantSettings settings)
     {
         settings.NormalizeUsb();

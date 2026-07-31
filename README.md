@@ -112,6 +112,32 @@ Kimlik: enroll/okuma için `X-Tenant-Key`, telemetri için `X-Agent-Token`.
 > döner (canlı pano içindir). Geçmişe bakmak için **`/report/*`** uçları kullanılır — panelin
 > Uyarılar, Veri Güvenliği, Dosya Olayları ve Aktivite ekranları bunları kullanır.
 
+## Kurumsal işletim
+
+**Uyarı bildirimi (e-posta · webhook · SIEM).** Uyarıyı görmek için paneli açık tutmak gerekmiyor.
+Kritik olaylar 60 sn'lik pencerede toplanıp TEK bildirimde gönderilir (aynı tipte 10 dk bekleme →
+toplu kopyalamada 200 e-posta yağmuru olmaz).
+
+| Ayar | Nerede |
+|---|---|
+| Alıcı e-postalar, webhook adresi, en düşük önem | Panel → **Ayarlar → Uyarı Bildirimi** (firma başına) |
+| SMTP kimliği | Sunucu ortam değişkeni (parola tenant kaydına yazılmaz) |
+
+```bash
+ARGUS_SMTP_HOST=smtp.firma.com   ARGUS_SMTP_PORT=587
+ARGUS_SMTP_USER=argus@firma.com  ARGUS_SMTP_PASS=***
+ARGUS_SMTP_FROM=argus@firma.com  ARGUS_SMTP_TLS=true
+ARGUS_PANEL_URL=http://192.168.2.247:5099     # e-postadaki panel bağlantısı
+ARGUS_SYSLOG=10.0.0.5:514                     # SIEM'e CEF/syslog akışı (UDP)
+```
+SIEM akışı **CEF** biçimindedir → Splunk / QRadar / ArcSight / Wazuh doğrudan ayrıştırır. Uyarılar
+toplanmadan anında gönderilir (korelasyon gecikmesin).
+
+**Veri saklama (retention).** 300 makine × 15 sn telemetri ile `events` tablosu sınırsız büyür.
+Panel → **Ayarlar → Veri Saklama** ile gün sayısı verilir (0 = sınırsız); sunucu genelinde varsayılan
+`ARGUS_RETENTION_DAYS` ile belirlenir. Günde bir kez yalnız **telemetri** silinir —
+firma, kullanıcı, lisans ve ayar kayıtlarına dokunulmaz. KVKK saklama süresiyle uyumlu seçin.
+
 **Saat dilimi (`ARGUS_TZ`):** Uç nokta olayları agent'ın yerel saatiyle damgalanır, sunucu Ubuntu'da
 genelde UTC çalışır. Rapor gün sınırları `ARGUS_TZ` ile belirlenir (varsayılan `Europe/Istanbul`),
 böylece "Bugün" filtresi saat farkından kaymaz.

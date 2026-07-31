@@ -216,6 +216,58 @@ public sealed class StoreTests : IDisposable
         Assert.Equal("allow", _store.GetSettings(_tenant.Id).UsbAccess);
     }
 
+    // --- Veri saklama (retention) ---
+
+    [Fact]
+    public void SaklamaEskiTelemetriyiSilerYenisiniBirakir()
+    {
+        var now = DateTime.Now;
+        _store.AddEvents(_tenant.Id, _agentA.Id, new[]
+        {
+            Event("copy", @"C:\cok-eski.txt", now.AddDays(-400)),
+            Event("copy", @"C:\dun.txt", now.AddDays(-1))
+        });
+        _store.AddAlerts(_tenant.Id, _agentA.Id, new[] { Alert("mass_copy", "warning", now) });
+
+        var cutoffWall = DateTime.UtcNow.Date.AddDays(-365);
+        var silinen = _store.PurgeOlderThan(_tenant.Id, cutoffWall, Ts(now.AddDays(-365)));
+        Assert.True(silinen >= 1);
+
+        var kalan = _store.EventsInRange(_tenant.Id, null, Ts(now.AddYears(-5)), Ts(now.AddDays(1)), 100);
+        Assert.Single(kalan);
+        Assert.EndsWith("dun.txt", kalan[0].Path);
+    }
+
+    [Fact]
+    public void SaklamaFirmaVeKullaniciKayitlariniSilmez()
+    {
+        // Telemetri temizliği asla firma/kullanıcı/ayar kaydına dokunmamalı.
+        _store.CreateUser(_tenant.Id, "mudur", Passwords.Hash("Parola.123"), Roles.Admin, "Müdür");
+        _store.SaveSettings(_tenant.Id, new TenantSettings { UsbAccess = "readonly", RetentionDays = 365 });
+
+        _store.PurgeOlderThan(_tenant.Id, DateTime.UtcNow.AddDays(1), Ts(DateTime.Now.AddDays(1)));
+
+        Assert.NotNull(_store.GetTenantById(_tenant.Id));
+        Assert.Equal(1, _store.CountUsers(_tenant.Id));
+        Assert.Equal("readonly", _store.GetSettings(_tenant.Id).UsbAccess);
+        Assert.Equal(365, _store.GetSettings(_tenant.Id).RetentionDays);
+    }
+
+    [Fact]
+    public void SaklamaBaskaFirmayiEtkilemez()
+    {
+        var diger = _store.SeedTenant("Diğer Ltd.", "tk_test_003");
+        var digerAgent = _store.EnrollAgent(diger.Id, "PC-Z", "z", "lan");
+        var now = DateTime.Now;
+        _store.AddEvents(diger.Id, digerAgent.Id, new[] { Event("copy", @"C:\digerin-eski.txt", now.AddDays(-400)) });
+
+        // Bizim firmayı temizle → diğer firmanın verisi durmalı.
+        _store.PurgeOlderThan(_tenant.Id, DateTime.UtcNow.AddDays(1), Ts(now.AddDays(1)));
+
+        var digerinKaydi = _store.EventsInRange(diger.Id, null, Ts(now.AddYears(-5)), Ts(now.AddDays(1)), 100);
+        Assert.Single(digerinKaydi);
+    }
+
     // --- Parola güvenliği ---
 
     [Fact]

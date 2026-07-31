@@ -93,6 +93,12 @@ if (store is SqliteStore sqlite)
     app.Lifetime.ApplicationStopping.Register(() => backupTimer?.Dispose());
 }
 
+// Bildirim motoru (e-posta / webhook / SIEM). Yapılandırılmamışsa sessizce devre dışı kalır.
+var notifier = new Notifier(store);
+app.Lifetime.ApplicationStopping.Register(() => notifier.Dispose());
+app.Logger.LogInformation("Bildirim: e-posta={Mail}  SIEM/syslog={Syslog}  (webhook firma ayarından)",
+    notifier.EmailConfigured ? "açık" : "yapılandırılmadı", notifier.SyslogConfigured ? "açık" : "yapılandırılmadı");
+
 app.Logger.LogInformation("Argus Server hazır. Panel: http://localhost:5099   API: /api/v1");
 app.Logger.LogInformation("Depolama: {Store}", string.IsNullOrWhiteSpace(pgConn) ? $"SQLite ({Path.Combine(dataDir, "argus.db")})" : "PostgreSQL");
 app.Logger.LogInformation("Demo tenant: {Name}  (X-Tenant-Key: {Key})", demo.Name, demo.Key);
@@ -135,6 +141,38 @@ static (HashSet<string> ids, HashSet<string> machines)? DeptScope(PanelUser u, I
 // ARGUS_TZ ile değiştirilebilir (IANA adı, ör. "Europe/Istanbul").
 var fieldTz = ResolveFieldTz(Environment.GetEnvironmentVariable("ARGUS_TZ"));
 app.Logger.LogInformation("Saha saat dilimi (rapor sınırları): {Tz}", fieldTz.Id);
+
+// --- Veri saklama (retention) ---
+// 300 makine × 15 sn telemetri → events tablosu sınırsız büyür; zamanla panel ve raporlar
+// yavaşlar, disk dolar. Günde bir kez, firma politikasındaki süreden eski TELEMETRİYİ siler
+// (firma/kullanıcı/lisans/ayar kayıtlarına DOKUNMAZ).
+// Firma ayarı 0 ise ARGUS_RETENTION_DAYS (sunucu varsayılanı) uygulanır; o da yoksa silme yapılmaz.
+var defaultRetention = int.TryParse(Environment.GetEnvironmentVariable("ARGUS_RETENTION_DAYS"), out var rd) ? rd : 0;
+void RunRetention()
+{
+    try
+    {
+        foreach (var t in store.ListTenants())
+        {
+            var days = store.GetSettings(t.Id).RetentionDays;
+            if (days <= 0) days = defaultRetention;
+            if (days <= 0) continue;
+
+            // Kesim noktası saha duvar saatiyle kurulur (olay damgaları da öyle tutuluyor).
+            var cutoffWall = DateTime.UtcNow.Date.AddDays(-days);
+            var cutoff = new DateTimeOffset(cutoffWall, fieldTz.GetUtcOffset(cutoffWall));
+            var removed = store.PurgeOlderThan(t.Id, cutoff.UtcDateTime, cutoff.ToString("o"));
+            if (removed > 0)
+            {
+                FileLog.Info($"Saklama: {t.Name} → {days} günden eski {removed} kayıt silindi.");
+                app.Logger.LogInformation("Saklama temizliği: {Tenant} {Days} gün, {N} kayıt silindi", t.Name, days, removed);
+            }
+        }
+    }
+    catch (Exception ex) { FileLog.Error("retention", ex.Message); }
+}
+var retentionTimer = new System.Threading.Timer(_ => RunRetention(), null, TimeSpan.FromMinutes(5), TimeSpan.FromHours(24));
+app.Lifetime.ApplicationStopping.Register(() => retentionTimer.Dispose());
 
 static TimeZoneInfo ResolveFieldTz(string? id)
 {
@@ -190,7 +228,13 @@ v1.MapPost("/telemetry", (HttpContext ctx, IStore s, TelemetryBatch batch) =>
 
     var sum = false; var al = 0; var ev = 0;
     if (batch.Summary is not null) { s.SaveSummary(a.TenantId, a.Id, batch.Summary); sum = true; }
-    if (batch.Alerts is { Count: > 0 }) { s.AddAlerts(a.TenantId, a.Id, batch.Alerts); al = batch.Alerts.Count; }
+    if (batch.Alerts is { Count: > 0 })
+    {
+        s.AddAlerts(a.TenantId, a.Id, batch.Alerts);
+        al = batch.Alerts.Count;
+        // Bildirim: kuyruğa atar, gönderimi ayrı iplik yapar → agent'ın telemetri isteği beklemez.
+        notifier.Enqueue(a.TenantId, s.GetTenantById(a.TenantId)?.Name ?? a.TenantId, a.Machine, batch.Alerts);
+    }
     if (batch.Events is { Count: > 0 }) { s.AddEvents(a.TenantId, a.Id, batch.Events); ev = batch.Events.Count; }
     if (batch.WebUsage is { Count: > 0 }) { s.AddWebUsage(a.TenantId, a.Id, a.Machine, a.User, batch.WebUsage); }
     if (batch.AppUsage is { Count: > 0 }) { s.AddAppUsage(a.TenantId, a.Id, a.Machine, a.User, batch.AppUsage); }

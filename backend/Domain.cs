@@ -89,6 +89,17 @@ public sealed class TenantSettings
     public List<string> WatchFolders { get; set; } = new(); // boşsa agent varsayılanı (Masaüstü+Belgeler)
     public List<string> SensitiveKeywords { get; set; } = new(); // içerikte aranacak ek anahtar kelimeler
 
+    // --- Bildirim (uyarı bu firmadan çıkınca kime haber verilecek) ---
+    // SMTP kimliği SUNUCU düzeyinde (ARGUS_SMTP_*) tutulur — parola tenant kaydına yazılmaz.
+    public string NotifyEmailTo { get; set; } = "";        // virgülle ayrık alıcılar (boş = e-posta yok)
+    public string NotifyWebhookUrl { get; set; } = "";     // Slack/Teams/kendi ucunuz (boş = webhook yok)
+    public string NotifyMinSeverity { get; set; } = "critical";   // critical | warning | info
+
+    // --- Veri saklama ---
+    // 0 = sınırsız. Telemetri (olay/uyarı/web/uygulama/belge) bu süreden eskiyse silinir;
+    // firma, kullanıcı, lisans ve ayar kayıtlarına dokunulmaz.
+    public int RetentionDays { get; set; } = 0;
+
     public string UpdatedAt { get; set; } = "";
 
     // İki alanı tek doğruya indirger: eski kayıtlarda/eski panelde yalnız UsbBlocked var,
