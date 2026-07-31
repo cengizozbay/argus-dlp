@@ -10,11 +10,18 @@
 //   - IBAN          (TR + mod-97 doğrulaması)
 //   - Kredi kartı   (13-19 hane + Luhn doğrulaması)
 //   - Anahtar kelime (politika ile gelen liste: "gizli", "confidential", "maaş" …)
+//   - Şifreli/parola korumalı dosya (veri okunamaz → tek başına şüphe sinyalidir)
 //
-// Kapsam: yalnız metin çıkarılabilen dosyalar. Düz metin (.txt/.csv/.json/.xml/.html/.md/.sql…)
-//   ve Office (.docx/.xlsx/.pptx — ZIP içindeki XML'den metin çıkarılır) taranır.
-//   8 MB üzeri ya da tanınmayan/ikili tür taranmaz (performans + gürültü). Dosya kilitliyse atlanır.
-// Not: tarama olay ipliğinde senkron çalışır; olay hızı düşük ve boyut sınırlı olduğundan güvenli.
+// KAPSAM (2026-07-31'de genişletildi — önceki sürüm yalnız düz metin + yeni Office okuyordu):
+//   düz metin · yeni Office (.docx/.xlsx/.pptx) · **PDF** · **eski Office (.doc/.xls/.ppt)** ·
+//   **ZIP arşivi içi (özyinelemeli)**. Bunlar taranmadığı sürece sistem "temiz" diyordu —
+//   sahadaki en hassas belgeler (fatura, sözleşme, kimlik taraması) tam olarak bu formatlardaydı.
+//
+// SINIRLAR (bilerek):
+//   - TARANMIŞ (görüntü) PDF'te metin yoktur → OCR gerekir, kapsam dışı.
+//   - RAR/7z tescilli formatlardır; sıfır-bağımlılık kuralı gereği açılmaz — ama şifreli/açılamaz
+//     arşiv olarak İŞARETLENİR (sızıntı sinyali kaybolmaz).
+//   - Boyut tavanı politikadan gelir (varsayılan 32 MB); üstü "taranmadı" sayılır.
 
 using System.IO.Compression;
 using System.Text;
@@ -24,18 +31,32 @@ namespace Argus.Agent;
 
 public sealed class ContentClassifier
 {
-    private const long MaxBytes = 8 * 1024 * 1024;   // 8 MB üzeri taranmaz
+    private const int MaxHits = 500;          // bu kadar bulgudan sonra taramayı sürdürmenin faydası yok
+    private const int MaxArchiveEntries = 300;
+    private const int MaxArchiveDepth = 2;    // zip içinde zip → 2 kat yeter, zip-bombasını keser
 
     private volatile bool _enabled = true;
     private volatile string[] _keywords = Array.Empty<string>();
+    private volatile string[] _keywordsFolded = Array.Empty<string>();
+    private volatile int _maxBytes = 32 * 1024 * 1024;
+    private volatile bool _scanArchives = true;
+    private volatile bool _flagEncrypted = true;
 
     private static readonly HashSet<string> TextExt = new(StringComparer.OrdinalIgnoreCase)
     {
         ".txt", ".csv", ".tsv", ".log", ".json", ".xml", ".html", ".htm",
-        ".md", ".sql", ".ini", ".cfg", ".yml", ".yaml", ".rtf", ".eml"
+        ".md", ".sql", ".ini", ".cfg", ".yml", ".yaml", ".rtf", ".eml", ".vcf"
     };
-    private static readonly HashSet<string> OfficeExt = new(StringComparer.OrdinalIgnoreCase)
-        { ".docx", ".xlsx", ".pptx" };
+    private static readonly HashSet<string> OoxmlExt = new(StringComparer.OrdinalIgnoreCase)
+        { ".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm" };
+    // Eski ikili Office + Outlook iletisi → yazdırılabilir dizi çıkarımıyla taranır.
+    private static readonly HashSet<string> LegacyExt = new(StringComparer.OrdinalIgnoreCase)
+        { ".doc", ".xls", ".ppt", ".msg", ".mdb", ".dbf", ".pst" };
+    private static readonly HashSet<string> ZipExt = new(StringComparer.OrdinalIgnoreCase)
+        { ".zip" };
+    // Açamadığımız arşivler — içerik görülemez, ama "arşivle ve kaçır" sinyali kaydedilir.
+    private static readonly HashSet<string> OpaqueArchiveExt = new(StringComparer.OrdinalIgnoreCase)
+        { ".rar", ".7z", ".gz", ".tar", ".tgz", ".bz2", ".cab", ".iso" };
 
     // 11 hane; ilk hane 0 olamaz. Sağlama ayrıca doğrular.
     private static readonly Regex RxTc = new(@"(?<![0-9])[1-9][0-9]{10}(?![0-9])", RegexOptions.Compiled);
@@ -45,7 +66,8 @@ public sealed class ContentClassifier
     private static readonly Regex RxCard = new(@"(?<![0-9])(?:[0-9][ -]?){13,19}(?![0-9])", RegexOptions.Compiled);
 
     // Politikadan gelen ayarları uygula (panelde değişince canlı geçerli olur).
-    public void Configure(bool enabled, IEnumerable<string>? keywords)
+    public void Configure(bool enabled, IEnumerable<string>? keywords, int maxMb = 32,
+                          bool scanArchives = true, bool flagEncrypted = true)
     {
         _enabled = enabled;
         _keywords = (keywords ?? Enumerable.Empty<string>())
@@ -53,6 +75,10 @@ public sealed class ContentClassifier
             .Select(k => k.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        _keywordsFolded = _keywords.Select(TrFold).ToArray();
+        _maxBytes = Math.Clamp(maxMb, 1, 512) * 1024 * 1024;
+        _scanArchives = scanArchives;
+        _flagEncrypted = flagEncrypted;
     }
 
     public bool Enabled => _enabled;
@@ -65,51 +91,171 @@ public sealed class ContentClassifier
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return (null, 0);
             var ext = Path.GetExtension(path);
-            var isText = TextExt.Contains(ext);
-            var isOffice = OfficeExt.Contains(ext);
-            if (!isText && !isOffice) return (null, 0);
+
+            // Açılamayan arşiv türleri: içerik görülemez ama hareketin kendisi sinyaldir.
+            if (_flagEncrypted && OpaqueArchiveExt.Contains(ext))
+                return ("Açılamayan arşiv", 1);
 
             var fi = new FileInfo(path);
-            if (fi.Length == 0 || fi.Length > MaxBytes) return (null, 0);
+            if (fi.Length == 0) return (null, 0);
+            if (fi.Length > _maxBytes) return (null, 0);   // tavan üstü → taranmadı
 
-            var text = isOffice ? ReadOffice(path) : ReadText(path);
-            if (string.IsNullOrEmpty(text)) return (null, 0);
-
-            return Inspect(text);
+            var acc = new Findings(_keywordsFolded);
+            ScanFile(path, ext, acc, depth: 0);
+            return acc.Result();
         }
         catch { return (null, 0); }   // kilitli/erişilemez dosya → sessizce atla
     }
 
-    // Metni tara, tür başına EN AZ bir eşleşmeyi say. Etiket okunur sırayla birleştirilir.
-    private (string? Label, int Hits) Inspect(string text)
+    // Tek bir dosyayı (ya da arşiv girdisini) türüne göre uygun çıkarıcıya yönlendirir.
+    private void ScanFile(string path, string ext, Findings acc, int depth)
     {
-        var labels = new List<string>();
-        var hits = 0;
-
-        var tc = CountValid(RxTc.Matches(text), IsValidTc);
-        if (tc > 0) { labels.Add("TC Kimlik"); hits += tc; }
-
-        var iban = CountValid(RxIban.Matches(text), IsValidIban);
-        if (iban > 0) { labels.Add("IBAN"); hits += iban; }
-
-        var card = CountValid(RxCard.Matches(text), IsValidCard);
-        if (card > 0) { labels.Add("Kredi Kartı"); hits += card; }
-
-        if (_keywords.Length > 0)
+        try
         {
-            var kwHits = 0;
-            foreach (var kw in _keywords)
-                if (text.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) kwHits++;
-            if (kwHits > 0) { labels.Add("Anahtar kelime"); hits += kwHits; }
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            ScanStream(fs, ext, acc, depth, (int)new FileInfo(path).Length);
         }
-
-        return labels.Count == 0 ? (null, 0) : (string.Join(", ", labels), hits);
+        catch { /* kilitli/erişilemez → atla */ }
     }
 
-    private static int CountValid(MatchCollection matches, Func<string, bool> valid)
+    private void ScanStream(Stream s, string ext, Findings acc, int depth, int sizeHint)
+    {
+        long budget = _maxBytes;
+
+        if (OoxmlExt.Contains(ext))
+        {
+            // Parola korumalı OOXML aslında OLE2 kabuğudur → ZIP olarak açılamaz.
+            try { acc.Feed(TextExtract.Ooxml(s, budget)); }
+            catch { if (_flagEncrypted) acc.MarkEncrypted(); }
+            return;
+        }
+
+        if (ZipExt.Contains(ext))
+        {
+            if (_scanArchives && depth < MaxArchiveDepth) ScanZip(s, acc, depth);
+            else if (_flagEncrypted) acc.MarkEncrypted();
+            return;
+        }
+
+        if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            var buf = ReadAll(s, (int)Math.Min(budget, Math.Max(sizeHint, 4096)));
+            if (buf.Length == 0) return;
+            if (TextExtract.PdfIsEncrypted(buf)) { if (_flagEncrypted) acc.MarkEncrypted(); return; }
+            acc.Feed(TextExtract.Pdf(buf, budget));
+            return;
+        }
+
+        if (TextExt.Contains(ext)) { acc.Feed(TextExtract.PlainText(s, budget)); return; }
+        if (LegacyExt.Contains(ext)) { acc.Feed(TextExtract.BinaryStrings(s, budget)); return; }
+        // Tanınmayan tür → taranmaz (ikili gürültü + performans).
+    }
+
+    // ZIP içindeki her girdiyi kendi türüne göre tarar. Şifreli girdi açılamaz → işaretlenir.
+    private void ScanZip(Stream s, Findings acc, int depth)
+    {
+        ZipArchive zip;
+        try { zip = new ZipArchive(s, ZipArchiveMode.Read, leaveOpen: true); }
+        catch { if (_flagEncrypted) acc.MarkEncrypted(); return; }   // şifreli/bozuk arşiv
+
+        using (zip)
+        {
+            var n = 0;
+            long extracted = 0;
+            foreach (var e in zip.Entries)
+            {
+                if (acc.Hits >= MaxHits || ++n > MaxArchiveEntries || extracted > _maxBytes) break;
+                if (e.Length <= 0 || e.Length > _maxBytes) continue;
+                var ext = Path.GetExtension(e.Name);
+                if (OpaqueArchiveExt.Contains(ext)) { if (_flagEncrypted) acc.MarkEncrypted(); continue; }
+
+                try
+                {
+                    // Girdiyi belleğe al: PDF/ZIP çıkarıcıları rastgele erişim ister,
+                    // ZipArchiveEntry akışı ileri-sarımlıdır.
+                    using var es = e.Open();
+                    using var ms = new MemoryStream();
+                    es.CopyTo(ms, 81920);
+                    extracted += ms.Length;
+                    ms.Position = 0;
+                    ScanStream(ms, ext, acc, depth + 1, (int)ms.Length);
+                }
+                catch (InvalidDataException) { if (_flagEncrypted) acc.MarkEncrypted(); }   // parola korumalı girdi
+                catch { /* bozuk girdi → atla */ }
+            }
+        }
+    }
+
+    private static byte[] ReadAll(Stream s, int cap)
+    {
+        using var ms = new MemoryStream();
+        var buf = new byte[81920];
+        int n;
+        while (ms.Length < cap && (n = s.Read(buf, 0, buf.Length)) > 0) ms.Write(buf, 0, n);
+        return ms.ToArray();
+    }
+
+    // --- Bulgu biriktirici ---
+    //
+    // Parça parça gelen metni tarar. Parça sınırında bölünen deseni kaçırmamak için önceki
+    // parçanın kuyruğunu bir sonrakinin başına ekler; aynı numara iki kez sayılmasın diye
+    // normalize edilmiş değerler bir kümede tutulur.
+    private sealed class Findings
+    {
+        private readonly string[] _keywords;        // Türkçe katlanmış aranacak kelimeler
+        private readonly HashSet<string> _seen = new();
+        private readonly HashSet<string> _kw = new(StringComparer.Ordinal);
+        private int _tc, _iban, _card;
+        private bool _encrypted;
+        private string _tail = "";
+
+        public Findings(string[] keywords) => _keywords = keywords;
+
+        public int Hits => _tc + _iban + _card + _kw.Count + (_encrypted ? 1 : 0);
+
+        public void MarkEncrypted() => _encrypted = true;
+
+        public void Feed(IEnumerable<string> chunks)
+        {
+            foreach (var raw in chunks)
+            {
+                if (string.IsNullOrEmpty(raw)) continue;
+                var text = _tail.Length > 0 ? _tail + raw : raw;
+                _tail = text.Length > TextExtract.OverlapChars ? text[^TextExtract.OverlapChars..] : text;
+                Scan(text);
+                if (Hits >= MaxHits) return;
+            }
+            _tail = "";   // sonraki dosya/girdi için sıfırla
+        }
+
+        private void Scan(string text)
+        {
+            _tc += CountValid(RxTc.Matches(text), IsValidTc, _seen);
+            _iban += CountValid(RxIban.Matches(text), IsValidIban, _seen);
+            _card += CountValid(RxCard.Matches(text), IsValidCard, _seen);
+            if (_keywords.Length > 0)
+            {
+                var folded = TrFold(text);   // "GİZLİ" ile "gizli" eşleşsin
+                foreach (var k in _keywords)
+                    if (folded.Contains(k, StringComparison.Ordinal)) _kw.Add(k);
+            }
+        }
+
+        public (string? Label, int Hits) Result()
+        {
+            var labels = new List<string>();
+            if (_tc > 0) labels.Add("TC Kimlik");
+            if (_iban > 0) labels.Add("IBAN");
+            if (_card > 0) labels.Add("Kredi Kartı");
+            if (_kw.Count > 0) labels.Add("Anahtar kelime");
+            if (_encrypted) labels.Add("Şifreli/açılamayan");
+            return labels.Count == 0 ? (null, 0) : (string.Join(", ", labels), Hits);
+        }
+    }
+
+    private static int CountValid(MatchCollection matches, Func<string, bool> valid, HashSet<string> seen)
     {
         var n = 0;
-        var seen = new HashSet<string>();
         foreach (Match m in matches)
         {
             var v = m.Value;
@@ -122,6 +268,24 @@ public sealed class ContentClassifier
     {
         var sb = new StringBuilder(s.Length);
         foreach (var c in s) if (!char.IsWhiteSpace(c) && c != '-') sb.Append(char.ToUpperInvariant(c));
+        return sb.ToString();
+    }
+
+    // Türkçe'ye duyarlı büyük/küçük harf katlaması.
+    //
+    // NEDEN GEREKLİ: OrdinalIgnoreCase, Türkçe'nin dört I harfini birbirine EŞLEMEZ.
+    // Politikaya "gizli" yazan yönetici, belgede "GİZLİ" geçen dosyayı YAKALAYAMIYORDU —
+    // Türkiye'ye satılan bir DLP için sessiz ama ciddi bir kaçak. I / İ / ı / i hepsi 'i'ye
+    // katlanır; diğer Türkçe harfleri (ş/ğ/ü/ö/ç) ToLowerInvariant zaten doğru eşler.
+    internal static string TrFold(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        foreach (var c in s)
+            sb.Append(c switch
+            {
+                'I' or 'İ' or 'ı' or 'i' => 'i',
+                _ => char.ToLowerInvariant(c)
+            });
         return sb.ToString();
     }
 
@@ -167,12 +331,19 @@ public sealed class ContentClassifier
         return rem == 1;
     }
 
-    // Kredi kartı Luhn doğrulaması + zayıf desenleri ele (hepsi aynı hane vb.).
+    // Kredi kartı: Luhn + KART AİLESİ ÖN EKİ + uzunluk uyumu.
+    //
+    // NEDEN ÖN EK ŞART: Luhn tek başına rastgele 16 haneli bir dizinin ~%10'unu geçirir.
+    // PDF içerik akışları ve ikili belgeler bol miktarda sayı dizisi üretir; sahada
+    // romanlarda/taslaklarda bile "Kredi Kartı" bulgusu çıkıyordu → uyarı çöplüğü ve
+    // güven kaybı. Gerçek kartlar bilinen BIN ön ekleriyle başlar; bu filtre yanlış
+    // pozitifi pratikte sıfıra indirir, gerçek kartı kaçırmaz.
     private static bool IsValidCard(string raw)
     {
         var digits = raw.Where(char.IsDigit).ToArray();
         if (digits.Length < 13 || digits.Length > 19) return false;
         if (digits.All(c => c == digits[0])) return false;   // 000…/111… → gürültü
+        if (!HasKnownCardPrefix(new string(digits))) return false;
 
         var sum = 0; var alt = false;
         for (var i = digits.Length - 1; i >= 0; i--)
@@ -185,50 +356,23 @@ public sealed class ContentClassifier
         return sum % 10 == 0;
     }
 
-    // --- Metin çıkarma ---
-
-    private static string ReadText(string path)
+    // Bilinen kart ailesi ön eki + o aileye uyan uzunluk. Türkiye'de kullanılanlar dahil (Troy).
+    private static bool HasKnownCardPrefix(string d)
     {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return sr.ReadToEnd();
-    }
+        var n = d.Length;
+        var p2 = (d[0] - '0') * 10 + (d[1] - '0');
+        var p3 = p2 * 10 + (d[2] - '0');
+        var p4 = p3 * 10 + (d[3] - '0');
 
-    // Office = ZIP. İçindeki XML parçalarından (word/xl/ppt) metni çıkarır (etiketleri atarak).
-    private static string ReadOffice(string path)
-    {
-        var sb = new StringBuilder();
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
-        foreach (var entry in zip.Entries)
-        {
-            var n = entry.FullName;
-            if (!n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!(n.StartsWith("word/") || n.StartsWith("xl/") || n.StartsWith("ppt/"))) continue;
-            if (sb.Length > MaxBytes) break;
-            try
-            {
-                using var es = entry.Open();
-                using var sr = new StreamReader(es, Encoding.UTF8);
-                var xml = sr.ReadToEnd();
-                sb.Append(StripTags(xml)).Append(' ');
-            }
-            catch { /* bozuk parça → atla */ }
-        }
-        return sb.ToString();
-    }
-
-    // XML etiketlerini boşlukla değiştir (basit metin çıkarımı; tam DOM'a gerek yok).
-    private static string StripTags(string xml)
-    {
-        var sb = new StringBuilder(xml.Length);
-        var inside = false;
-        foreach (var c in xml)
-        {
-            if (c == '<') inside = true;
-            else if (c == '>') { inside = false; sb.Append(' '); }
-            else if (!inside) sb.Append(c);
-        }
-        return sb.ToString();
+        if (d[0] == '4') return n is 13 or 16 or 19;                       // Visa
+        if (p2 is >= 51 and <= 55) return n == 16;                          // MasterCard (klasik)
+        if (p4 is >= 2221 and <= 2720) return n == 16;                      // MasterCard (yeni aralık)
+        if (p2 is 34 or 37) return n == 15;                                 // American Express
+        if (p4 == 9792) return n == 16;                                     // Troy (Türkiye)
+        if (p2 == 62) return n is >= 16 and <= 19;                          // UnionPay
+        if (p2 == 65 || p4 == 6011 || p3 is >= 644 and <= 649) return n is 16 or 19;   // Discover
+        if (p4 is >= 3528 and <= 3589) return n is >= 16 and <= 19;         // JCB
+        if (p2 is 36 or 38 or 39 || p3 is >= 300 and <= 305) return n is >= 14 and <= 19;  // Diners
+        return false;
     }
 }

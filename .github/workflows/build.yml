@@ -30,3 +30,9 @@ jobs:
 
       - name: WebHost (tarayıcı köprüsü)
         run: dotnet build webhost/Argus.WebHost.csproj -c Release --nologo
+
+      # Otomatik testler. NOT: geliştirme makinesinde Windows Smart App Control imzasız
+      # Argus.Server.dll'i yüklemeyi engelliyor → backend testleri YALNIZ burada koşabiliyor.
+      # Bu adım kırmızıysa sunucuya deploy etmeyin.
+      - name: Testler
+        run: dotnet test tests/Argus.Tests.csproj -c Release --nologo --logger "console;verbosity=normal"

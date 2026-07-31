@@ -81,6 +81,9 @@ public sealed class AgentSettings
         return a is "allow" or "readonly" or "block" ? a : (UsbBlocked ? "block" : "allow");
     }
     public bool ContentScan { get; set; } = true;
+    public int ContentScanMaxMb { get; set; } = 32;      // bu boyutun üstündeki dosya taranmaz
+    public bool ScanArchives { get; set; } = true;       // ZIP içini özyinelemeli tara
+    public bool FlagEncrypted { get; set; } = true;      // şifreli/açılamayan dosyayı sızıntı sinyali say
     public List<string>? WatchFolders { get; set; }
     public List<string>? SensitiveKeywords { get; set; }
     public string UpdatedAt { get; set; } = "";

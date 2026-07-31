@@ -1028,8 +1028,11 @@
           nrow("win","Pencere (sn)",s.windowSeconds,"kayan zaman penceresi")+
           nrow("cool","Bekleme (sn)",s.cooldownSeconds,"aynı uyarı tekrarı arası")+
         '</div></div>'+
-        '<div class="panel"><div class="ph"><b>Hassas İçerik Taraması (DLP)</b><span class="bd">dosya içeriğini tarar · TC kimlik, IBAN, kart doğrulamalı</span></div><div class="fgrid">'+
+        '<div class="panel"><div class="ph"><b>Hassas İçerik Taraması (DLP)</b><span class="bd">PDF · Office (yeni+eski) · ZIP içi · düz metin · TC/IBAN/kart doğrulamalı</span></div><div class="fgrid">'+
           '<div class="frow"><label>İçerik taraması<span class="fh">TC/IBAN/kart + anahtar kelime</span></label><label class="toggle"><input type="checkbox" id="set-scan"'+(s.contentScan?" checked":"")+'> Açık</label></div>'+
+          nrow("scanmb","Tarama boyut tavanı (MB)",s.contentScanMaxMb==null?32:s.contentScanMaxMb,"bu boyutun üstü taranmaz · 1-512")+
+          '<div class="frow"><label>Arşiv içi tarama<span class="fh">ZIP içine girer — "zip\'le ve USB\'ye at" yolunu kapatır</span></label><label class="toggle"><input type="checkbox" id="set-arch"'+(s.scanArchives!==false?" checked":"")+'> Açık</label></div>'+
+          '<div class="frow"><label>Şifreli dosya sinyali<span class="fh">parola korumalı / açılamayan dosya (rar, 7z, şifreli zip) sızıntı sinyali sayılsın</span></label><label class="toggle"><input type="checkbox" id="set-enc"'+(s.flagEncrypted!==false?" checked":"")+'> Açık</label></div>'+
           '<div class="frow wide"><label>Anahtar kelimeler<span class="fh">her satıra bir kelime · içerikte geçince hassas sayılır (ör. gizli, maaş, sözleşme)</span></label><textarea id="set-keywords" placeholder="gizli&#10;confidential&#10;maaş">'+esc((s.sensitiveKeywords&&s.sensitiveKeywords.length)?s.sensitiveKeywords.join("\n"):"")+'</textarea></div>'+
         '</div></div>'+
         '<div class="panel"><div class="ph"><b>Dosya İzleme Motoru</b><span class="bd">değişiklik agent yeniden başlayınca geçerli</span></div><div class="fgrid">'+
@@ -1066,6 +1069,9 @@
       usbAccess:document.getElementById("set-usbaccess").value,
       usbBlocked:document.getElementById("set-usbaccess").value==="block",   // eski agent'lar için geriye uyum
       contentScan:document.getElementById("set-scan").checked,
+      contentScanMaxMb:Math.min(512,Math.max(1,numOf("scanmb",32))),
+      scanArchives:document.getElementById("set-arch").checked,
+      flagEncrypted:document.getElementById("set-enc").checked,
       watchFolders:folders,
       sensitiveKeywords:keywords
     };

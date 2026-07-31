@@ -144,6 +144,8 @@ internal static class Program
             }
         }
 
+        StartScanWorker();   // içerik taraması ayrı iplikte (izleyici tamponunu tıkamasın)
+
         // USB / harici disk izleme — takılma/çıkarılma + medyaya yazılan dosyalar (usb_copy).
         if (usbOn && !_fileServerMode)
         {
@@ -185,11 +187,21 @@ internal static class Program
         }
 
         LogEvent(new AgentEvent("session_end", null, null, Environment.MachineName, Environment.UserName));
-        Flush();
-        if (_server is not null) TrySend();
+
+        // Kaynakları önce kapat (yeni olay gelmesin), sonra tarama kuyruğunu boşalt —
+        // aksi halde kapanışta bekleyen olaylar sunucuya hiç gitmezdi.
         _fileSource?.Dispose();
         _netFileSource?.Dispose();
         _usbSource?.Dispose();
+        try
+        {
+            ScanQueue.CompleteAdding();
+            _scanThread?.Join(TimeSpan.FromSeconds(10));
+        }
+        catch { }
+
+        Flush();
+        if (_server is not null) TrySend();
         Console.WriteLine($"\nDurduruldu. Veriler: {_dataDir}");
     }
 
@@ -199,7 +211,7 @@ internal static class Program
     private static void ApplySettings(AgentSettings s)
     {
         _engine.Configure(s.DeleteThreshold, s.CopyThreshold, s.UsbThreshold, s.SensitiveThreshold, s.WindowSeconds, s.CooldownSeconds);
-        _classifier.Configure(s.ContentScan, s.SensitiveKeywords);
+        _classifier.Configure(s.ContentScan, s.SensitiveKeywords, s.ContentScanMaxMb, s.ScanArchives, s.FlagEncrypted);
         if (s.SendSeconds >= 5) _cfg.SendSeconds = s.SendSeconds;
         if (s.IdleThresholdSeconds >= 5) _idleThreshold = s.IdleThresholdSeconds;
         WriteUsbSignal(s.EffectiveUsbAccess());   // USB politikası → SYSTEM servisi registry'yi uygular
@@ -571,19 +583,59 @@ internal static class Program
         // Hassas içerik taraması — oluşturma/değiştirme/kopyalama olaylarında (silmede dosya yok, taranmaz).
         // "create" olayında dosya çoğu kez henüz boştur (içerik sonradan yazılır); "modify" bu boşluğu kapatır.
         // Uyarı yalnız kopya/USB'de tetiklenir; modify yalnız panelde "hassas" etiketi düşürür.
+        //
+        // TARAMA BU İPLİKTE YAPILMAZ. Burası dosya izleyicisinin (FSW/USN) geri çağırma ipliğidir;
+        // PDF/arşiv taraması onlarca ms sürebilir ve izleyici tamponu taşarak OLAY KAYBINA yol açar
+        // (tam da USB toplu kopyalama gibi kritik anlarda). Olay bir kuyruğa alınır, ayrı bir iplik tarar.
         if (_classifier.Enabled && e.Op is "create" or "modify" or "copy" or "usb_copy")
         {
-            var (label, hits) = _classifier.Classify(e.Path);
-            if (label is not null)
-            {
-                e = e with { Sensitivity = label, SensitiveHits = hits };
-                Interlocked.Increment(ref _sensitiveFiles);
-            }
+            if (ScanQueue.TryAdd(e)) return;
+            // Kuyruk dolu (aşırı yük): olayı ASLA düşürme — yalnız içerik taramasından vazgeç.
+            Interlocked.Increment(ref _scanSkipped);
         }
 
+        Emit(e);
+    }
+
+    // Olayı diske yaz + sunucuya kuyrukla + uyarı motoruna ver. Tek yerden geçsin ki
+    // hem senkron hem tarama-ipliği yolu aynı davransın.
+    private static void Emit(FileEvent e)
+    {
         LogLine(_eventsPath, e);
         if (_server is not null) Enqueue(PendingEvents, new OutEvent(e.Ts, null, e.Op, null, null, null, e.Path, e.Sensitivity, e.OldPath, e.User));
         _engine.Observe(e);
+    }
+
+    // --- İçerik tarama kuyruğu ---
+    // Sınırlı kapasite: bellek şişmesin. Dolu olması veri kaybı DEĞİL, yalnız o olayda
+    // içerik etiketi olmaması demektir (olayın kendisi yine kaydedilir).
+    private static readonly System.Collections.Concurrent.BlockingCollection<FileEvent> ScanQueue =
+        new(new System.Collections.Concurrent.ConcurrentQueue<FileEvent>(), 4000);
+    private static long _scanSkipped;
+    private static Thread? _scanThread;
+
+    private static void StartScanWorker()
+    {
+        _scanThread = new Thread(() =>
+        {
+            foreach (var ev in ScanQueue.GetConsumingEnumerable())
+            {
+                var e = ev;
+                try
+                {
+                    var (label, hits) = _classifier.Classify(e.Path);
+                    if (label is not null)
+                    {
+                        e = e with { Sensitivity = label, SensitiveHits = hits };
+                        Interlocked.Increment(ref _sensitiveFiles);
+                    }
+                }
+                catch { /* tarama hatası olayı düşürmesin */ }
+                try { Emit(e); } catch { }
+            }
+        })
+        { IsBackground = true, Name = "argus-scan" };
+        _scanThread.Start();
     }
 
     private static void OnAlert(Alert a)

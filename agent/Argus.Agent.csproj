@@ -18,4 +18,9 @@
     <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Test projesi iç sınıfları (TextExtract vb.) doğrudan test edebilsin. -->
+    <InternalsVisibleTo Include="Argus.Tests" />
+  </ItemGroup>
+
 </Project>

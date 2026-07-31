@@ -83,6 +83,9 @@ public sealed class TenantSettings
     public string FileMonitor { get; set; } = "auto";    // auto | usn | fsw (dosya izleme motoru)
     public bool UsbMonitoring { get; set; } = true;      // USB/harici disk izleme açık mı
     public bool ContentScan { get; set; } = true;        // dosya içeriği hassas veri taraması (TC/IBAN/kart)
+    public int ContentScanMaxMb { get; set; } = 32;      // bu boyutun üstündeki dosya taranmaz (1-512)
+    public bool ScanArchives { get; set; } = true;       // ZIP arşivi içini özyinelemeli tara ("zip'le ve kaçır" engeli)
+    public bool FlagEncrypted { get; set; } = true;      // şifreli/parola korumalı/açılamayan dosyayı sinyal say
     public List<string> WatchFolders { get; set; } = new(); // boşsa agent varsayılanı (Masaüstü+Belgeler)
     public List<string> SensitiveKeywords { get; set; } = new(); // içerikte aranacak ek anahtar kelimeler
 

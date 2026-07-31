@@ -27,3 +27,7 @@ extension.pem
 logs/
 *.log
 backups/
+
+# Test çıktıları
+tests/bin/
+tests/obj/
